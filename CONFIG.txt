@@ -1,0 +1,7 @@
+Piekary Górne
+01
+1
+
+w pierwszej linice nazwa przystanka (np. Piekary Górne)
+w drugiej linice numer przystanka (np. 01)
+w trzeciej linice 1 jesli z busami kolei malopolskich 0 jesli nie
