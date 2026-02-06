@@ -1,4 +1,7 @@
 beta 1.1
+musisz pobrac jeszcze gtfs_krk_a, gtfs_krk_m, ald-gtfs z tych stron
+https://gtfs.ztp.krakow.pl/
+https://kolejemalopolskie.com.pl/pl/rozklady-jazdy/gtfs
 w pliku CONFIG.txt ustaw numer przystanku i przystanek
 potrzebny jest photobuf (pip install -r requirements.txt)
 
@@ -56,4 +59,5 @@ potrzebny jest photobuf (pip install -r requirements.txt)
                                  @@-.  @@@@@@ =- #@ @@@:.        @.@@                             
                                    @@@     +  =*@*#+           @-@@+                              
                                    @=@%@                       @.@@                               
+
                                      @ -%#                   %@@ .  
