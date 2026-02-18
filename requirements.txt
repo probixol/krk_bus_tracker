@@ -1,3 +1,4 @@
 requests
 protobuf
 gtfs-realtime-bindings
+firebase_admin
