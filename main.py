@@ -12,6 +12,12 @@ except ModuleNotFoundError as e:
 
 import time as time_module
 import requests, csv, zipfile, math, os, io
+from firebase_admin import db
+
+import firebase_admin
+from firebase_admin import credentials
+from firebase_admin import db
+import os
 from google.transit import gtfs_realtime_pb2
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -35,6 +41,11 @@ stop_ids = []
 stop_lat = []
 stop_lon = []
 kml_stop_ids = []
+czas = []
+linia = []
+kierunek = []
+na_zywo = []
+rozklad = {}
 block_to_route = {} # slownik blockow na routy
 block_to_dest = {}
 block_to_service = {}
@@ -45,6 +56,36 @@ GTFS_KRK_A = PROJECT_DIR / "GTFS_KRK_A"
 GTFS_KRK_M = PROJECT_DIR / "GTFS_KRK_M"
 GTFS_KML = PROJECT_DIR / "ald-gtfs"
 config = PROJECT_DIR / "CONFIG.txt"
+
+# ta czesc kodu od googla
+KEY_PATH = PROJECT_DIR / "krk-bus-tracker-firebase-adminsdk-fbsvc-0b46cc464b.json"
+DATABASE_URL = 'https://krk-bus-tracker-default-rtdb.europe-west1.firebasedatabase.app'
+try:
+    if not os.path.exists(KEY_PATH): # klucz check
+        raise FileNotFoundError(f"Nie znalzeiono klucza pod adresem: {KEY_PATH}")
+    cred = credentials.Certificate(KEY_PATH)
+    firebase_admin.initialize_app(cred, {
+        'databaseURL': DATABASE_URL
+    })
+    print("Firebase database dziala!")
+except FileNotFoundError as e:
+    print(f"Error: {e}")
+    print("Prawdopodobnie problem z KEY_PATH")
+    exit()
+except ValueError as e:
+    print(f"Error initializing Firebase: {e}")
+    print("Sprawdz SERVICE_ACCOUNT_KEY_PATH i DATABASE_URL.")
+    exit()
+except Exception as e:
+    print(f"Blad typu exception: {e}")
+    exit()
+
+database_dir = db.reference()
+print(f"Connected to database at: {DATABASE_URL}")
+czas_dir = database_dir.child('czas')
+linia_dir = database_dir.child('linia')
+kierunek_dir = database_dir.child('kierunek')
+live_dir = database_dir.child('live')
 
 def timetable_update():
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -307,6 +348,10 @@ def main():
     refresh_time()
     upcoming_trips.clear()
     ignore_bus.clear()
+    czas.clear()
+    linia.clear()
+    kierunek.clear()
+    na_zywo.clear()
     # tak moglem to zapisac jakos lepiej i nie, nie chce mi sie
     try:
         online(URL="https://gtfs.ztp.krakow.pl/TripUpdates_A.pb")
@@ -332,8 +377,16 @@ def main():
         dest = dest or "??"
         status = "LIVE" if live else "SCHEDULE"
         print(f"{arrival_str} >> {line} >> {dest} >> {status}")
+        czas.append(arrival_str)
+        linia.append(line)
+        kierunek.append(dest)
+        na_zywo.append(status)
         x = x + 1
         if x == 4:
+            czas_dir.set(czas)
+            linia_dir.set(linia)
+            kierunek_dir.set(kierunek)
+            live_dir.set(na_zywo)
             break
     return True
 
