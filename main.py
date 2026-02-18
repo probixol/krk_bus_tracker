@@ -30,6 +30,7 @@ headers = {
     "User-Agent": "Mozilla/5.0"
 }
 live = 0
+p = 0
 x = 0
 y = 0
 z = 0
@@ -86,6 +87,8 @@ czas_dir = database_dir.child('czas')
 linia_dir = database_dir.child('linia')
 kierunek_dir = database_dir.child('kierunek')
 live_dir = database_dir.child('live')
+przystanek_dir = database_dir.child('przystanek')
+czasczas_dir = database_dir.child('czasczas')
 
 def timetable_update():
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -310,6 +313,9 @@ with config.open(newline="", encoding="utf-8-sig") as config:
     print("Numer przystanka: " + str(direction))
     print("Status KML: " + str(kml))
 
+przystanek = str(stop + ", " + direction)
+przystanek_dir.set(przystanek)
+
 translator(GTFS_KRK_A)
 translator(GTFS_KRK_M)
 translator(GTFS_KML)
@@ -391,5 +397,12 @@ def main():
     return True
 
 while 1 < 2:
+    p = 0
+    while p < 20:
+        czasczas = str(time_nosec)
+        czasczas = czasczas = czasczas[:-3]
+        print(czasczas)
+        czasczas_dir.set(czasczas)
+        time_module.sleep(1)
+        p = p + 1
     main()
-    time_module.sleep(20)
