@@ -263,44 +263,27 @@ def offline(base_dir, system):
                             week_number = int(week_number)
                         else:
                             week_number = week_to_krk_str[week_number]
-                        if time_diff < timedelta(hours=1):
-                            minutes = int(time_diff.total_seconds() // 60)
-                            minutes_str = f"{minutes} min"
-                            if minutes_str == "1439 min" or minutes_str == "0 min":
-                                minutes_str = "DEPARTING"
-                            upcoming_trips.append((arrival_td, minutes_str, line_number, dest, trip_id, live))
-                        else:
-                            h, m, s = map(int, row["arrival_time"].split(":"))
-                            dep_time = timedelta(hours=h, minutes=m, seconds=s)
-                            if dep_time > timedelta(hours=24):
-                                dep_time = dep_time - timedelta(hours=24) # nizej zamiana dep time na stringa poniewaz crash, 02d formatuje :1 > :01
-                            dep_time_str = f"{int(dep_time.total_seconds() // 3600):02d}:" \
-                                           f"{int((dep_time.total_seconds() % 3600) // 60):02d}:" \
-                                           f"{int(dep_time.total_seconds() % 60):02d}"
-                            upcoming_trips.append((arrival_td, dep_time_str, line_number, dest, trip_id, live))
-                        if system == "kml":
-                            if week_number in yesterday_check:
-                                time_diff = arrival_td - time_nosec
-                                route_id = block_to_route.get(trip_id)
-                                line_number = route_to_number.get(route_id) if route_id else None
-                                dest = block_to_dest.get(trip_id) if trip_id else None
-                                live = False
-                                if time_diff < timedelta(hours=1):
-                                    minutes = int(time_diff.total_seconds() // 60)
-                                    minutes_str = f"{minutes} min"
-                                    if minutes_str == "1439 min" or minutes_str == "0 min":
-                                        minutes_str = "DEPARTING"
-                                    upcoming_trips.append((arrival_td, minutes_str, line_number, dest, trip_id, live))
-                                else:
-                                    h, m, s = map(int, row["arrival_time"].split(":"))
-                                    dep_time = timedelta(hours=h, minutes=m, seconds=s)
-                                    if dep_time > timedelta(hours=24):
-                                        dep_time = dep_time - timedelta(hours=24)
-                                    # Convert dep_time (timedelta) to a string here
-                                    dep_time_str = f"{int(dep_time.total_seconds() // 3600):02d}:" \
-                                                   f"{int((dep_time.total_seconds() % 3600) // 60):02d}:" \
-                                                   f"{int(dep_time.total_seconds() % 60):02d}"
-                                    upcoming_trips.append((arrival_td, dep_time_str, line_number, dest, trip_id, live))
+                        if week_number in yesterday_check:
+                            time_diff = arrival_td - time_nosec
+                            route_id = block_to_route.get(trip_id)
+                            line_number = route_to_number.get(route_id) if route_id else None
+                            dest = block_to_dest.get(trip_id) if trip_id else None
+                            live = False
+                            if time_diff < timedelta(hours=1):
+                                minutes = int(time_diff.total_seconds() // 60)
+                                minutes_str = f"{minutes} min"
+                                if minutes_str == "1439 min" or minutes_str == "0 min":
+                                    minutes_str = "DEPARTING"
+                                upcoming_trips.append((arrival_td, minutes_str, line_number, dest, trip_id, live))
+                            else:
+                                h, m, s = map(int, row["arrival_time"].split(":"))
+                                dep_time = timedelta(hours=h, minutes=m, seconds=s)
+                                if dep_time > timedelta(hours=24):
+                                    dep_time = dep_time - timedelta(hours=24)
+                                # Convert dep_time (timedelta) to a string here
+                                dep_time_str = f"{int(dep_time.total_seconds() // 3600):02d}:" \
+                                               f"{int((dep_time.total_seconds() % 3600) // 60):02d}"
+                                upcoming_trips.append((arrival_td, dep_time_str, line_number, dest, trip_id, live))
 
 
 with config.open(newline="", encoding="utf-8-sig") as config:
@@ -395,12 +378,11 @@ def main():
     return True
 
 while 1 < 2:
+    main()
     p = 0
     while p < 20:
         czasczas = str(time_nosec)
         czasczas = czasczas = czasczas[:-3]
-        print(czasczas)
         czasczas_dir.set(czasczas)
         time_module.sleep(1)
         p = p + 1
-    main()
