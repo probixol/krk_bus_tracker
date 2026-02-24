@@ -8,6 +8,7 @@ try: # protobuf check
 except ModuleNotFoundError as e:
     print("brak protobufa, uruchom:")
     print("pip install -r requirements.txt")
+    input()
     exit(1)
 
 import time as time_module
@@ -39,14 +40,20 @@ trip_ids = []
 stop_ids = []
 stop_lat = []
 stop_lon = []
-kml_stop_ids = []
+kml_stop_ids = {}
 czas = []
 linia = []
 kierunek = []
 na_zywo = []
 rozklad = {}
+czas_dict = {}
+linia_dict = {}
+stops_data = {}
+kierunek_dict = {}
+na_zywo_dict = {}
 block_to_route = {} # slownik blockow na routy
 block_to_dest = {}
+block_to_direction = {}
 block_to_service = {}
 route_to_number = {}  # slownik routow na number linii
 # uniwersalne foldery
@@ -81,10 +88,11 @@ except Exception as e:
 
 database_dir = db.reference()
 print(f"Connected to database at: {DATABASE_URL}")
-czas_dir = database_dir.child('czas')
-linia_dir = database_dir.child('linia')
-kierunek_dir = database_dir.child('kierunek')
-live_dir = database_dir.child('live')
+
+czas_dir = db.reference("00/czas")
+linia_dir = db.reference("00/linia")
+kierunek_dir = db.reference("00/kierunek")
+live_dir = db.reference("00/live")
 przystanek_dir = database_dir.child('przystanek')
 czasczas_dir = database_dir.child('czasczas')
 
@@ -121,11 +129,14 @@ def translator(base_dir):
             block_to_route[row["trip_id"]] = row["route_id"]
             block_to_dest[row["trip_id"]] = row["trip_headsign"]
             block_to_service[row["trip_id"]] = row["service_id"]
+            if base_dir != GTFS_KML:
+                block_to_direction[row["trip_id"]] = row["direction_id"]
     routes = base_dir / "routes.txt"
     with routes.open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         for row in reader:
             route_to_number[row["route_id"]] = row["route_short_name"]
+
 
 PROJECT_DIR = Path(__file__).resolve().parent # ogolny folder
 GTFS_DIRS = [ # foldery poszczegolnych gtfs
@@ -178,7 +189,7 @@ def stop_find(base_dir):
                     stop_lon.append(float(row["stop_lon"]))
                     stop_ids.append(row["stop_id"])
                     found = True
-                    print("Przystanek KRK >> " + row["stop_id"])
+                    print("Przystanek KRK >> " + row["stop_id"] + " >> " + row["stop_desc"])
                     y = y + 1
 
 def online(URL):
@@ -223,7 +234,8 @@ def online(URL):
                     if minutes == "1439 min" or minutes == "0 min":
                         minutes = "DEPARTING"
                     live = True
-                    upcoming_trips.append((departure_td, minutes, line_number, dest, trip_id, live))
+                    tstop = stop_update.stop_id
+                    upcoming_trips.append((departure_td, minutes, line_number, dest, trip_id, live, tstop))
 
 def offline(base_dir, system):
     stop_times = base_dir / "stop_times.txt"
@@ -248,6 +260,7 @@ def offline(base_dir, system):
                     yesterday_check = (week_to_kml[today],)
             if row["trip_id"] not in ignore_bus:
                 if row["stop_id"] in active_stop_ids:
+                    tstop = row["stop_id"]
                     arrival_td = parse_gtfs_time(row["arrival_time"])  # czas przyjazdu w timedelta
                     tommorow_status = arrival_td >= timedelta(hours=24)
                     if tommorow_status:  # jesli kurs jest po polnocy to -24h i poprzedni dzien
@@ -272,16 +285,15 @@ def offline(base_dir, system):
                                 minutes_str = f"{minutes} min"
                                 if minutes_str == "1439 min" or minutes_str == "0 min":
                                     minutes_str = "DEPARTING"
-                                upcoming_trips.append((arrival_td, minutes_str, line_number, dest, trip_id, live))
+                                upcoming_trips.append((arrival_td, minutes_str, line_number, dest, trip_id, live, tstop))
                             else:
                                 h, m, s = map(int, row["arrival_time"].split(":"))
                                 dep_time = timedelta(hours=h, minutes=m, seconds=s)
                                 if dep_time > timedelta(hours=24):
                                     dep_time = dep_time - timedelta(hours=24)
-                                # Convert dep_time (timedelta) to a string here
                                 dep_time_str = f"{int(dep_time.total_seconds() // 3600):02d}:" \
                                                f"{int((dep_time.total_seconds() % 3600) // 60):02d}"
-                                upcoming_trips.append((arrival_td, dep_time_str, line_number, dest, trip_id, live))
+                                upcoming_trips.append((arrival_td, dep_time_str, line_number, dest, trip_id, live, tstop))
 
 
 with config.open(newline="", encoding="utf-8-sig") as config:
@@ -320,13 +332,14 @@ while current_stop < krk_count:
                     (current_lat - stop_lat[current_stop]) ** 2 + (current_lon - stop_lon[current_stop]) ** 2)
                 potentials.append((distance, row["stop_id"]))
             potentials.sort(key=lambda x: x[0])
-            kml_stop_ids.append(potentials[0][1])
+            kml_stop_ids[potentials[0][1]] = stop_ids[current_stop]
             print("Przystanek KML >> " + str(potentials[0][1]))
             potentials.clear()
             current_stop += 1
 print("stop_ids:", stop_ids)
 print("stop_lat:", stop_lat)
 print("stop_lon:", stop_lon)
+print("kml_stop_ids:",kml_stop_ids)
 
 def main():
     timetable_update()
@@ -356,23 +369,26 @@ def main():
     print(str(time) + " >> Last update")
 
     x = 0
+    count = print(len(upcoming_trips))
     upcoming_trips.sort(key=lambda x: x[0])
-    for _, arrival_str, line, dest, trip_id, live in upcoming_trips:
+    for _, arrival_str, line, dest, trip_id, live, tstop in upcoming_trips:
         line = line or "??"  # fallback gdyby nie bylo
         dest = dest or "??"
         status = "LIVE" if live else "SCHEDULE"
-        print(f"{arrival_str} >> {line} >> {dest} >> {status}")
-        czas.append(arrival_str)
-        linia.append(line)
-        kierunek.append(dest)
-        na_zywo.append(status)
-        x = x + 1
-        if x == 4:
-            czas_dir.set(czas)
-            linia_dir.set(linia)
-            kierunek_dir.set(kierunek)
-            live_dir.set(na_zywo)
-            break
+        tstop = kml_stop_ids.get(tstop, tstop)
+        tstop = tstop[-2:]
+        print(f"{arrival_str} >> {line} >> {dest} >> {status} >> {trip_id} >> {tstop}")
+        if tstop not in stops_data:
+            stops_data[tstop] = {"czas": [], "linia": [], "kierunek": [], "na_zywo": []} #
+
+        stops_data[tstop]["czas"].append(arrival_str) # sortowanie danych do odpowienich katergorii
+        stops_data[tstop]["linia"].append(line)
+        stops_data[tstop]["kierunek"].append(dest)
+        stops_data[tstop]["na_zywo"].append(status)
+
+    root_ref = db.reference()
+    for stop_id, data in stops_data.items(): # tworzenie folderow 00 01 itp
+        root_ref.child(stop_id).set(data)
     return True
 
 while 1 < 2:
