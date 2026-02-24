@@ -368,8 +368,6 @@ def main():
     os.system('cls' if os.name == 'nt' else 'clear')
     print(str(time) + " >> Last update")
 
-    x = 0
-    count = print(len(upcoming_trips))
     upcoming_trips.sort(key=lambda x: x[0])
     for _, arrival_str, line, dest, trip_id, live, tstop in upcoming_trips:
         line = line or "??"  # fallback gdyby nie bylo
