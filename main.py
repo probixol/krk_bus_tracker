@@ -12,12 +12,10 @@ except ModuleNotFoundError as e:
 
 import time as time_module
 import requests, csv, zipfile, math, os, io
-from firebase_admin import db
 
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import db
-import os
 from google.transit import gtfs_realtime_pb2
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -382,7 +380,7 @@ while 1 < 2:
     p = 0
     while p < 20:
         czasczas = str(time_nosec)
-        czasczas = czasczas = czasczas[:-3]
+        czasczas = czasczas[:-3]
         czasczas_dir.set(czasczas)
         time_module.sleep(1)
         p = p + 1
