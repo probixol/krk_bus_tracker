@@ -346,7 +346,6 @@ def main():
     refresh_time()
     upcoming_trips.clear()
     ignore_bus.clear()
-    all_data = {"czas": [], "linia": [], "kierunek": [], "na_zywo": []}
     czas.clear()
     linia.clear()
     kierunek.clear()
@@ -368,7 +367,8 @@ def main():
 
     os.system('cls' if os.name == 'nt' else 'clear')
     print(str(time) + " >> Last update")
-
+    
+    all_data = {"czas": [], "linia": [], "kierunek": [], "na_zywo": []}
     upcoming_trips.sort(key=lambda x: x[0])
     for _, arrival_str, line, dest, trip_id, live, tstop in upcoming_trips:
         line = line or "??"  # fallback gdyby nie bylo
