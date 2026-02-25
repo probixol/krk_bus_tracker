@@ -346,6 +346,7 @@ def main():
     refresh_time()
     upcoming_trips.clear()
     ignore_bus.clear()
+    all_data = {"czas": [], "linia": [], "kierunek": [], "na_zywo": []}
     czas.clear()
     linia.clear()
     kierunek.clear()
@@ -375,18 +376,29 @@ def main():
         status = "LIVE" if live else "SCHEDULE"
         tstop = kml_stop_ids.get(tstop, tstop)
         tstop = tstop[-2:]
-        print(f"{arrival_str} >> {line} >> {dest} >> {status} >> {trip_id} >> {tstop}")
+        #print(f"{arrival_str} >> {line} >> {dest} >> {status} >> {trip_id} >> {tstop}")
         if tstop not in stops_data:
             stops_data[tstop] = {"czas": [], "linia": [], "kierunek": [], "na_zywo": []} #
+        if len(stops_data[tstop]["czas"]) < 4:
+            stops_data[tstop]["czas"].append(arrival_str) # sortowanie danych do odpowienich katergorii
+            stops_data[tstop]["linia"].append(line)
+            stops_data[tstop]["kierunek"].append(dest)
+            stops_data[tstop]["na_zywo"].append(status)
+            if direction == tstop:
+                print(f"{arrival_str} >> {line} >> {dest} >> {status}")
 
-        stops_data[tstop]["czas"].append(arrival_str) # sortowanie danych do odpowienich katergorii
-        stops_data[tstop]["linia"].append(line)
-        stops_data[tstop]["kierunek"].append(dest)
-        stops_data[tstop]["na_zywo"].append(status)
+            if len(all_data["czas"]) < 4:
+                all_data["czas"].append(arrival_str)  # 00
+                all_data["linia"].append(line)
+                all_data["kierunek"].append(dest)
+                all_data["na_zywo"].append(status)
+                if direction == "00":
+                    print(f"{arrival_str} >> {line} >> {dest} >> {status}")
 
+    db.reference("00").set(all_data) # zapisanie 00
     root_ref = db.reference()
     for stop_id, data in stops_data.items(): # tworzenie folderow 00 01 itp
-        root_ref.child(stop_id).set(data)
+        root_ref.child(stop_id).set(data) # np. w 01 daje wszystko
     return True
 
 while 1 < 2:
