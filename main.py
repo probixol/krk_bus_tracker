@@ -365,10 +365,13 @@ def main():
     if kml == "1":
         offline(GTFS_KML, "kml")
 
+    stops_data.clear()
+
     os.system('cls' if os.name == 'nt' else 'clear')
     print(str(time) + " >> Last update")
-    
+
     all_data = {"czas": [], "linia": [], "kierunek": [], "na_zywo": []}
+
     upcoming_trips.sort(key=lambda x: x[0])
     for _, arrival_str, line, dest, trip_id, live, tstop in upcoming_trips:
         line = line or "??"  # fallback gdyby nie bylo
@@ -386,7 +389,6 @@ def main():
             stops_data[tstop]["na_zywo"].append(status)
             if direction == tstop:
                 print(f"{arrival_str} >> {line} >> {dest} >> {status}")
-
             if len(all_data["czas"]) < 4:
                 all_data["czas"].append(arrival_str)  # 00
                 all_data["linia"].append(line)
