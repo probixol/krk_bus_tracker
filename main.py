@@ -238,9 +238,12 @@ def online(URL):
                         seconds=departure_dt.second
                     )
                     minutes = int(time_delta.total_seconds() // 60)
-                    minutes = f"{minutes} min"
-                    if minutes == "1439 min":
-                        minutes = "0 min"
+                    if minutes <= 0:
+                        minutes_str = "0 min"
+                    else:
+                        minutes_str = f"{minutes} min"
+                    if minutes_str == "1439 min":
+                        minutes_str = "0 min"
                     live = 1
                     tstop = stop_update.stop_id
                     delay_seconds = stop_update.departure.delay
@@ -248,7 +251,7 @@ def online(URL):
                     if delay_minutes > 5:
                         live = 2
 
-                    upcoming_trips.append((departure_td, minutes, line_number, dest, trip_id, live, tstop, delay_minutes))
+                    upcoming_trips.append((departure_td, minutes_str, line_number, dest, trip_id, live, tstop, delay_minutes))
 
 def offline(base_dir, system):
     stop_times = base_dir / "stop_times.txt"
@@ -296,7 +299,10 @@ def offline(base_dir, system):
                             live = 0
                             if time_diff < timedelta(hours=1):
                                 minutes = int(time_diff.total_seconds() // 60)
-                                minutes_str = f"{minutes} min"
+                                if minutes <= 0:
+                                    minutes_str = "0 min"
+                                else:
+                                    minutes_str = f"{minutes} min"
                                 if minutes_str == "1439 min":
                                     minutes_str = "0 min"
                                 upcoming_trips.append((arrival_td, minutes_str, line_number, dest, trip_id, live, tstop, delay_minutes))
@@ -325,7 +331,7 @@ def display(data):
     newdata = []
     busx = 0
     while busx < 4:
-        if len(data['kierunek'][busx]) >= 18:
+        if len(data['kierunek'][busx]) >= 19:
             data['kierunek'][busx] = data['kierunek'][busx][:18] + "."
         busx += 1
     busx = 0
