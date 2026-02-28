@@ -13,8 +13,13 @@ except ModuleNotFoundError as e:
 
 import time as time_module
 import requests, csv, zipfile, math, os, io
+import shutil, PyQt6, sys
+
 
 import firebase_admin
+from PyQt6.QtCore import QTimer
+from PyQt6.QtWidgets import QApplication, QWidget, QGridLayout, QLabel
+from PyQt6.QtGui import QFontDatabase, QFont
 from firebase_admin import credentials
 from firebase_admin import db
 from google.transit import gtfs_realtime_pb2
@@ -56,6 +61,9 @@ block_to_dest = {}
 block_to_direction = {}
 block_to_service = {}
 route_to_number = {}  # slownik routow na number linii
+
+opt_trips = []
+
 # uniwersalne foldery
 PROJECT_DIR = Path(__file__).resolve().parent  # glowny folder
 GTFS_KRK_A = PROJECT_DIR / "GTFS_KRK_A"
@@ -231,11 +239,16 @@ def online(URL):
                     )
                     minutes = int(time_delta.total_seconds() // 60)
                     minutes = f"{minutes} min"
-                    if minutes == "1439 min" or minutes == "0 min":
-                        minutes = "DEPARTING"
-                    live = True
+                    if minutes == "1439 min":
+                        minutes = "0 min"
+                    live = 1
                     tstop = stop_update.stop_id
-                    upcoming_trips.append((departure_td, minutes, line_number, dest, trip_id, live, tstop))
+                    delay_seconds = stop_update.departure.delay
+                    delay_minutes = delay_seconds // 60
+                    if delay_minutes > 5:
+                        live = 2
+
+                    upcoming_trips.append((departure_td, minutes, line_number, dest, trip_id, live, tstop, delay_minutes))
 
 def offline(base_dir, system):
     stop_times = base_dir / "stop_times.txt"
@@ -248,6 +261,7 @@ def offline(base_dir, system):
             week_to_krk = {0: 1, 1: 1, 2: 1, 3: 5, 4: 4, 5: 2, 6: 3} # pilka zmylka
             week_to_krk_str = {"PO": 1, "CZ": 5, "PT": 4, "SO": 2, "SW": 3}
             week_to_kml = {0: 7952, 1: 7952, 2: 7952, 3: 7952, 4: 7952, 5: 7953, 6: 7954} # serdeczne gratulacje kml
+            delay_minutes = 0
             if system == "krk":
                 if time < timedelta(hours=3):
                     yesterday_check = (week_to_krk[today], week_to_krk[(today - 1) % 7])
@@ -279,13 +293,14 @@ def offline(base_dir, system):
                             route_id = block_to_route.get(trip_id)
                             line_number = route_to_number.get(route_id) if route_id else None
                             dest = block_to_dest.get(trip_id) if trip_id else None
-                            live = False
+                            live = 0
                             if time_diff < timedelta(hours=1):
                                 minutes = int(time_diff.total_seconds() // 60)
                                 minutes_str = f"{minutes} min"
-                                if minutes_str == "1439 min" or minutes_str == "0 min":
-                                    minutes_str = "DEPARTING"
-                                upcoming_trips.append((arrival_td, minutes_str, line_number, dest, trip_id, live, tstop))
+                                if minutes_str == "1439 min":
+                                    minutes_str = "0 min"
+                                upcoming_trips.append((arrival_td, minutes_str, line_number, dest, trip_id, live, tstop, delay_minutes))
+                                #ignore_bus.append(trip_id)
                             else:
                                 h, m, s = map(int, row["arrival_time"].split(":"))
                                 dep_time = timedelta(hours=h, minutes=m, seconds=s)
@@ -293,16 +308,63 @@ def offline(base_dir, system):
                                     dep_time = dep_time - timedelta(hours=24)
                                 dep_time_str = f"{int(dep_time.total_seconds() // 3600):02d}:" \
                                                f"{int((dep_time.total_seconds() % 3600) // 60):02d}"
-                                upcoming_trips.append((arrival_td, dep_time_str, line_number, dest, trip_id, live, tstop))
+                                upcoming_trips.append((arrival_td, dep_time_str, line_number, dest, trip_id, live, tstop, delay_minutes))
+                                #ignore_bus.append(trip_id)
 
+
+def display(data):
+    while layout.count(): # reset
+        item = layout.takeAt(0)
+        if item.widget():
+            item.widget().deleteLater()
+    layout.setColumnStretch(0, 1)
+    layout.setColumnStretch(1, 20)
+    layout.setColumnStretch(2, 1)
+    now = datetime.now()
+    czasczas = f"{now.hour:02d}:{now.minute:02d}"
+    newdata = []
+    busx = 0
+    while busx < 4:
+        if len(data['kierunek'][busx]) >= 18:
+            data['kierunek'][busx] = data['kierunek'][busx][:18] + "."
+        busx += 1
+    busx = 0
+    while busx < 4:
+        newdata.append([
+            data['linia'][busx],
+            data['kierunek'][busx],
+            data['czas'][busx],
+            data['na_zywo'][busx]
+        ])
+        busx += 1
+    print(newdata)
+    header_label = QLabel(czasczas)
+    header_label.setFont(custom_font)
+    layout.addWidget(header_label, 0, 0)
+
+    for row, row_newdata in enumerate(newdata, start=1):
+        for col, text in enumerate(row_newdata[:-1]):
+            stop_label = QLabel(text)
+            stop_label.setFont(custom_font)
+            if row_newdata[-1] == 1: # ostatni element w rzedzie
+                stop_label.setStyleSheet("color: #32CD32;")  # change text color
+            elif row_newdata[-1] == 2: # ostatni element w rzedzie
+                stop_label.setStyleSheet("color: #DB143A;")  # change text color
+            else:
+                stop_label.setStyleSheet("color: white;")
+            layout.addWidget(stop_label, row, col)
+    window.setLayout(layout)
+    window.showFullScreen()
 
 with config.open(newline="", encoding="utf-8-sig") as config:
     stop = config.readline().strip()
     direction = config.readline().strip()
     kml = config.readline().strip()
+    czcionka = config.readline().strip()
     print("Przystanek: " + str(stop))
     print("Numer przystanka: " + str(direction))
     print("Status KML: " + str(kml))
+    print("Czcionka: " + str(czcionka))
 
 przystanek = str(stop + ", " + direction)
 przystanek_dir.set(przystanek)
@@ -340,8 +402,32 @@ print("stop_ids:", stop_ids)
 print("stop_lat:", stop_lat)
 print("stop_lon:", stop_lon)
 print("kml_stop_ids:",kml_stop_ids)
+app = QApplication(sys.argv)
+window = QWidget()
+layout = QGridLayout()
+
+clearview = PROJECT_DIR / "Clearview Font.ttf"
+helvetica = PROJECT_DIR / "Helvetica.ttf"
+helvetica_bold = PROJECT_DIR / "Helvetica-Bold.ttf"
+
+print(helvetica_bold)
+print(helvetica_bold.exists())
+
+if czcionka == "1":
+    font_id = QFontDatabase.addApplicationFont(str(clearview))
+elif czcionka == "1":
+    font_id = QFontDatabase.addApplicationFont(str(helvetica))
+else:
+    font_id = QFontDatabase.addApplicationFont(str(helvetica_bold))
+if font_id == -1:
+    print("Failed to load font")
+    sys.exit()
+font_family = QFontDatabase.applicationFontFamilies(font_id)[0]
+custom_font = QFont(font_family, 91)  # 40 = font size, adjust as needed
 
 def main():
+    global run
+    global upcoming_trips
     timetable_update()
     refresh_time()
     upcoming_trips.clear()
@@ -364,7 +450,6 @@ def main():
     offline(GTFS_KRK_M, "krk")
     if kml == "1":
         offline(GTFS_KML, "kml")
-
     stops_data.clear()
 
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -373,38 +458,52 @@ def main():
     all_data = {"czas": [], "linia": [], "kierunek": [], "na_zywo": []}
 
     upcoming_trips.sort(key=lambda x: x[0])
-    for _, arrival_str, line, dest, trip_id, live, tstop in upcoming_trips:
+    seen = set() # kml wylew bugfix
+    deduped = []
+    for trip in upcoming_trips:
+        key = (trip[0], trip[2], trip[6])  # (czas, linia, tstop)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(trip)
+    upcoming_trips = deduped
+
+    for _, arrival_str, line, dest, trip_id, live, tstop, delay_minutes in upcoming_trips:
         line = line or "??"  # fallback gdyby nie bylo
         dest = dest or "??"
-        status = "LIVE" if live else "SCHEDULE"
         tstop = kml_stop_ids.get(tstop, tstop)
         tstop = tstop[-2:]
         #print(f"{arrival_str} >> {line} >> {dest} >> {status} >> {trip_id} >> {tstop}")
+        opt_trips.append(trip_id)
         if tstop not in stops_data:
             stops_data[tstop] = {"czas": [], "linia": [], "kierunek": [], "na_zywo": []} #
         if len(stops_data[tstop]["czas"]) < 4:
             stops_data[tstop]["czas"].append(arrival_str) # sortowanie danych do odpowienich katergorii
             stops_data[tstop]["linia"].append(line)
             stops_data[tstop]["kierunek"].append(dest)
-            stops_data[tstop]["na_zywo"].append(status)
+            stops_data[tstop]["na_zywo"].append(live)
             if direction == tstop:
-                print(f"{arrival_str} >> {line} >> {dest} >> {status}")
+                print(f"{arrival_str} >> {line} >> {dest} >> {live} >> {tstop}")
             if len(all_data["czas"]) < 4:
                 all_data["czas"].append(arrival_str)  # 00
                 all_data["linia"].append(line)
                 all_data["kierunek"].append(dest)
-                all_data["na_zywo"].append(status)
-                if direction == "00":
-                    print(f"{arrival_str} >> {line} >> {dest} >> {status}")
+                all_data["na_zywo"].append(live)
+                print(f"{arrival_str} >> {line} >> {dest} >> {live} >> {tstop}")
 
+    print(ignore_bus)
     db.reference("00").set(all_data) # zapisanie 00
     root_ref = db.reference()
     for stop_id, data in stops_data.items(): # tworzenie folderow 00 01 itp
         root_ref.child(stop_id).set(data) # np. w 01 daje wszystko
+    display(all_data)
     return True
 
 while 1 < 2:
     main()
+    timer = QTimer() # specjalna petla qt
+    timer.timeout.connect(main)
+    timer.start(20000) # 20s
+    sys.exit(app.exec())
     p = 0
     while p < 20:
         czasczas = str(time_nosec)
