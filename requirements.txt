@@ -2,3 +2,4 @@ requests
 protobuf
 gtfs-realtime-bindings
 firebase_admin
+PyQt6
