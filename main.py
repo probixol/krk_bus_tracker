@@ -17,7 +17,7 @@ import shutil, PyQt6, sys
 
 
 import firebase_admin
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import QApplication, QWidget, QGridLayout, QLabel
 from PyQt6.QtGui import QFontDatabase, QFont
 from firebase_admin import credentials
@@ -253,72 +253,83 @@ def online(URL):
 
                     upcoming_trips.append((departure_td, minutes_str, line_number, dest, trip_id, live, tstop, delay_minutes))
 
-def offline(base_dir, system):
-    stop_times = base_dir / "stop_times.txt"
+def offline(preloaded, system):
     active_stop_ids = stop_ids if system == "krk" else kml_stop_ids
     if not active_stop_ids:
         return
+    for row in preloaded:
+        week_to_krk = {0: 1, 1: 1, 2: 1, 3: 5, 4: 4, 5: 2, 6: 3} # pilka zmylka
+        week_to_krk_str = {"PO": 1, "CZ": 5, "PT": 4, "SO": 2, "SW": 3}
+        week_to_kml = {0: 7952, 1: 7952, 2: 7952, 3: 7952, 4: 7952, 5: 7953, 6: 7954} # serdeczne gratulacje kml
+        delay_minutes = 0
+        if system == "krk":
+            if time < timedelta(hours=3):
+                yesterday_check = (week_to_krk[today], week_to_krk[(today - 1) % 7])
+            else:
+                yesterday_check = (week_to_krk[today],) # nawiasy zeby byla tupla (lista) a nie int
+        if system == "kml":
+            if time < timedelta(hours=3):
+                yesterday_check = (week_to_kml[today], week_to_kml[(today - 1) % 7])
+            else:
+                yesterday_check = (week_to_kml[today],)
+        if row["trip_id"] not in ignore_bus:
+            if row["stop_id"] in active_stop_ids:
+                tstop = row["stop_id"]
+                arrival_td = parse_gtfs_time(row["arrival_time"])  # czas przyjazdu w timedelta
+                tommorow_status = arrival_td >= timedelta(hours=24)
+                if tommorow_status:  # jesli kurs jest po polnocy to -24h i poprzedni dzien
+                    arrival_td = arrival_td - timedelta(hours=24)
+                    service_day = (today - 1) % 7
+                if arrival_td >= time_nosec:
+                    trip_id = row["trip_id"]
+                    service_id = block_to_service.get(trip_id, "")
+                    week_number = (service_id.split("_")[-1]) if service_id else (trip_id.split("_")[-1])
+                    if week_number.isdigit():
+                        week_number = int(week_number)
+                    else:
+                        week_number = week_to_krk_str[week_number]
+                    if week_number in yesterday_check:
+                        time_diff = arrival_td - time_nosec
+                        route_id = block_to_route.get(trip_id)
+                        line_number = route_to_number.get(route_id) if route_id else None
+                        dest = block_to_dest.get(trip_id) if trip_id else None
+                        live = 0
+                        if time_diff < timedelta(hours=1):
+                            minutes = int(time_diff.total_seconds() // 60)
+                            if minutes <= 0:
+                                minutes_str = "0 min"
+                            else:
+                                minutes_str = f"{minutes} min"
+                            if minutes_str == "1439 min":
+                                minutes_str = "0 min"
+                            upcoming_trips.append((arrival_td, minutes_str, line_number, dest, trip_id, live, tstop, delay_minutes))
+                            #ignore_bus.append(trip_id)
+                        else:
+                            h, m, s = map(int, row["arrival_time"].split(":"))
+                            dep_time = timedelta(hours=h, minutes=m, seconds=s)
+                            if dep_time > timedelta(hours=24):
+                                dep_time = dep_time - timedelta(hours=24)
+                            dep_time_str = f"{int(dep_time.total_seconds() // 3600):02d}:" \
+                                           f"{int((dep_time.total_seconds() % 3600) // 60):02d}"
+                            upcoming_trips.append((arrival_td, dep_time_str, line_number, dest, trip_id, live, tstop, delay_minutes))
+                            #ignore_bus.append(trip_id)
+def preload_stop_times(base_dir, system):
+    stop_times = base_dir / "stop_times.txt"
+    active_stop_ids = stop_ids if system == "krk" else list(kml_stop_ids.keys())
+    relevant = []
     with stop_times.open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
-        for row in reader: # dlaczego jest to niepotrzebnie zkomplikowane ?  ??  ?
-            week_to_krk = {0: 1, 1: 1, 2: 1, 3: 5, 4: 4, 5: 2, 6: 3} # pilka zmylka
-            week_to_krk_str = {"PO": 1, "CZ": 5, "PT": 4, "SO": 2, "SW": 3}
-            week_to_kml = {0: 7952, 1: 7952, 2: 7952, 3: 7952, 4: 7952, 5: 7953, 6: 7954} # serdeczne gratulacje kml
-            delay_minutes = 0
-            if system == "krk":
-                if time < timedelta(hours=3):
-                    yesterday_check = (week_to_krk[today], week_to_krk[(today - 1) % 7])
-                else:
-                    yesterday_check = (week_to_krk[today],) # nawiasy zeby byla tupla (lista) a nie int
-            if system == "kml":
-                if time < timedelta(hours=3):
-                    yesterday_check = (week_to_kml[today], week_to_kml[(today - 1) % 7])
-                else:
-                    yesterday_check = (week_to_kml[today],)
-            if row["trip_id"] not in ignore_bus:
-                if row["stop_id"] in active_stop_ids:
-                    tstop = row["stop_id"]
-                    arrival_td = parse_gtfs_time(row["arrival_time"])  # czas przyjazdu w timedelta
-                    tommorow_status = arrival_td >= timedelta(hours=24)
-                    if tommorow_status:  # jesli kurs jest po polnocy to -24h i poprzedni dzien
-                        arrival_td = arrival_td - timedelta(hours=24)
-                        service_day = (today - 1) % 7
-                    if arrival_td >= time_nosec:
-                        trip_id = row["trip_id"]
-                        service_id = block_to_service.get(trip_id, "")
-                        week_number = (service_id.split("_")[-1]) if service_id else (trip_id.split("_")[-1])
-                        if week_number.isdigit():
-                            week_number = int(week_number)
-                        else:
-                            week_number = week_to_krk_str[week_number]
-                        if week_number in yesterday_check:
-                            time_diff = arrival_td - time_nosec
-                            route_id = block_to_route.get(trip_id)
-                            line_number = route_to_number.get(route_id) if route_id else None
-                            dest = block_to_dest.get(trip_id) if trip_id else None
-                            live = 0
-                            if time_diff < timedelta(hours=1):
-                                minutes = int(time_diff.total_seconds() // 60)
-                                if minutes <= 0:
-                                    minutes_str = "0 min"
-                                else:
-                                    minutes_str = f"{minutes} min"
-                                if minutes_str == "1439 min":
-                                    minutes_str = "0 min"
-                                upcoming_trips.append((arrival_td, minutes_str, line_number, dest, trip_id, live, tstop, delay_minutes))
-                                #ignore_bus.append(trip_id)
-                            else:
-                                h, m, s = map(int, row["arrival_time"].split(":"))
-                                dep_time = timedelta(hours=h, minutes=m, seconds=s)
-                                if dep_time > timedelta(hours=24):
-                                    dep_time = dep_time - timedelta(hours=24)
-                                dep_time_str = f"{int(dep_time.total_seconds() // 3600):02d}:" \
-                                               f"{int((dep_time.total_seconds() % 3600) // 60):02d}"
-                                upcoming_trips.append((arrival_td, dep_time_str, line_number, dest, trip_id, live, tstop, delay_minutes))
-                                #ignore_bus.append(trip_id)
-
+        for row in reader:
+            if row["stop_id"] in active_stop_ids:
+                relevant.append(row)
+    return relevant
 
 def display(data):
+    while len(data['czas']) < 4:
+        data['czas'].append("")
+        data['linia'].append("")
+        data['kierunek'].append("")
+        data['na_zywo'].append(0)
     while layout.count(): # reset
         item = layout.takeAt(0)
         if item.widget():
@@ -346,6 +357,7 @@ def display(data):
     print(newdata)
     header_label = QLabel(czasczas)
     header_label.setFont(custom_font)
+    header_label.setStyleSheet("color: white;")
     layout.addWidget(header_label, 0, 0)
 
     for row, row_newdata in enumerate(newdata, start=1):
@@ -360,6 +372,7 @@ def display(data):
                 stop_label.setStyleSheet("color: white;")
             layout.addWidget(stop_label, row, col)
     window.setLayout(layout)
+    window.setStyleSheet("background-color: black;")
     window.showFullScreen()
 
 with config.open(newline="", encoding="utf-8-sig") as config:
@@ -409,6 +422,7 @@ print("stop_lat:", stop_lat)
 print("stop_lon:", stop_lon)
 print("kml_stop_ids:",kml_stop_ids)
 app = QApplication(sys.argv)
+app.setOverrideCursor(Qt.CursorShape.BlankCursor)
 window = QWidget()
 layout = QGridLayout()
 
@@ -429,7 +443,11 @@ if font_id == -1:
     print("Failed to load font")
     sys.exit()
 font_family = QFontDatabase.applicationFontFamilies(font_id)[0]
-custom_font = QFont(font_family, 91)  # 40 = font size, adjust as needed
+custom_font = QFont(font_family, 91)
+
+preloaded_krk_a = preload_stop_times(GTFS_KRK_A, "krk")
+preloaded_krk_m = preload_stop_times(GTFS_KRK_M, "krk")
+preloaded_kml = preload_stop_times(GTFS_KML, "kml") if kml == "1" else []
 
 def main():
     global run
@@ -452,10 +470,10 @@ def main():
         print("Error: ", e)
         print("Brawo Kraków ! ! !")
         return False
-    offline(GTFS_KRK_A, "krk")
-    offline(GTFS_KRK_M, "krk")
+    offline(preloaded_krk_a, "krk")
+    offline(preloaded_krk_m, "krk")
     if kml == "1":
-        offline(GTFS_KML, "kml")
+        offline(preloaded_kml, "kml")
     stops_data.clear()
 
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -488,13 +506,13 @@ def main():
             stops_data[tstop]["kierunek"].append(dest)
             stops_data[tstop]["na_zywo"].append(live)
             if direction == tstop:
-                print(f"{arrival_str} >> {line} >> {dest} >> {live} >> {tstop}")
+                print(f"{arrival_str} >> {line} >> {dest} >> {live} >> {tstop} >> {trip_id}")
             if len(all_data["czas"]) < 4:
                 all_data["czas"].append(arrival_str)  # 00
                 all_data["linia"].append(line)
                 all_data["kierunek"].append(dest)
                 all_data["na_zywo"].append(live)
-                print(f"{arrival_str} >> {line} >> {dest} >> {live} >> {tstop}")
+                print(f"{arrival_str} >> {line} >> {dest} >> {live} >> {tstop} >> {trip_id}")
 
     print(ignore_bus)
     db.reference("00").set(all_data) # zapisanie 00
