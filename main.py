@@ -167,6 +167,11 @@ def refresh_time(): # poniewaz czas sie pieprzy po sleepach
     time = timedelta(hours=now.hour, minutes=now.minute, seconds=now.second)
     time_nosec = timedelta(hours=now.hour, minutes=now.minute)
     today = datetime.weekday(now)
+    czasczas = str(time_nosec)
+    czasczas = czasczas[:-3]
+    print(czasczas)
+    czasczas_dir.set(czasczas)
+    time_module.sleep(1)
 
 def stop_find(base_dir):
     stops = base_dir / "stops.txt"
@@ -528,10 +533,3 @@ while 1 < 2:
     timer.timeout.connect(main)
     timer.start(20000) # 20s
     sys.exit(app.exec())
-    p = 0
-    while p < 20:
-        czasczas = str(time_nosec)
-        czasczas = czasczas[:-3]
-        czasczas_dir.set(czasczas)
-        time_module.sleep(1)
-        p = p + 1
