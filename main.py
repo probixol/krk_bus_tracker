@@ -14,8 +14,8 @@ except ModuleNotFoundError as e:
 import time as time_module
 import requests, csv, zipfile, math, os, io
 import shutil, PyQt6, sys
-
-
+import threading
+import socket
 import firebase_admin
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import QApplication, QWidget, QGridLayout, QLabel
@@ -61,9 +61,7 @@ block_to_dest = {}
 block_to_direction = {}
 block_to_service = {}
 route_to_number = {}  # slownik routow na number linii
-
-opt_trips = []
-
+socket.setdefaulttimeout(10)
 # uniwersalne foldery
 PROJECT_DIR = Path(__file__).resolve().parent  # glowny folder
 GTFS_KRK_A = PROJECT_DIR / "GTFS_KRK_A"
@@ -104,6 +102,13 @@ live_dir = db.reference("00/live")
 przystanek_dir = database_dir.child('przystanek')
 czasczas_dir = database_dir.child('czasczas')
 
+def internet_available():
+    try:
+        socket.create_connection(("8.8.8.8", 53), timeout=5)
+        return True
+    except OSError:
+        return False
+
 def timetable_update():
     today_str = datetime.now().strftime("%Y-%m-%d")
     data = PROJECT_DIR / "DATA.txt"
@@ -114,20 +119,26 @@ def timetable_update():
     else:
         last_update = None
     if last_update != today_str:
-        print("Aktualizacja GTFS. . .")
-        urls_and_dirs = [
-            ("https://gtfs.ztp.krakow.pl/GTFS_KRK_A.zip", GTFS_KRK_A),
-            ("https://gtfs.ztp.krakow.pl/GTFS_KRK_M.zip", GTFS_KRK_M),
-            ("https://www.kolejemalopolskie.com.pl/rozklady_jazdy/ald-gtfs.zip", GTFS_KML)
-        ]
-        for url, folder in urls_and_dirs:
-            response = requests.get(url, headers=headers, timeout=10)
-            zip_file = zipfile.ZipFile(io.BytesIO(response.content))
-            zip_file.extractall(folder)
-            print(f"Pobrano i wypakowano: {url}")
+        internet = internet_available()
+        if internet == True:
+            print("Aktualizacja GTFS. . .")
+            urls_and_dirs = [
+                ("https://gtfs.ztp.krakow.pl/GTFS_KRK_A.zip", GTFS_KRK_A),
+                ("https://gtfs.ztp.krakow.pl/GTFS_KRK_M.zip", GTFS_KRK_M),
+                ("https://www.kolejemalopolskie.com.pl/rozklady_jazdy/ald-gtfs.zip", GTFS_KML)
+            ]
+            for url, folder in urls_and_dirs:
+                try:
+                    response = requests.get(url, headers=headers, timeout=30)
+                    response.raise_for_status()
+                    zip_file = zipfile.ZipFile(io.BytesIO(response.content))
+                    zip_file.extractall(folder)
+                    print(f"Pobrano i wypakowano: {url}")
+                except Exception as e:
+                    print("GTFS update failed:", e)
 
-        with data.open("w", encoding="utf-8") as f:
-            f.write(today_str)
+            with data.open("w", encoding="utf-8") as f:
+                f.write(today_str)
 
 def translator(base_dir):
     trips = base_dir / "trips.txt"
@@ -206,57 +217,67 @@ def stop_find(base_dir):
                     y = y + 1
 
 def online(URL):
-    response = requests.get(URL, headers=headers, timeout=10)
-    feed = gtfs_realtime_pb2.FeedMessage()
-    if not response.content:
-        print("Error 1 (brawo krakow)")
-        return
-    try: # anti crash
-        feed.ParseFromString(response.content)
-    except Exception as e:
-        print(f"Error 2 (brawo krakow): {e}")
-        return
+    internet = internet_available()
+    if internet == True:
+        feed = gtfs_realtime_pb2.FeedMessage()
+        try:
+            response = requests.get(URL, headers=headers, timeout=10)
+            response.raise_for_status()
+        except requests.exceptions.ConnectionError:
+            print("Brak internetu")
+            return
+        except requests.exceptions.Timeout:
+            print("Timeout")
+            return
+        except requests.exceptions.HTTPError as e:
+            print("Brawo krakow:", e)
+            raise
+        try:
+            feed.ParseFromString(response.content)
+        except Exception as e:
+            print(f"Blad parsowania protobufa: {e}")
+            return
 
-    for entity in feed.entity:
-        if entity.HasField("trip_update"): # czy wogole jest kurs, jesli nie ma to kod pozniej nie zadziala
-            trip_update = entity.trip_update
-            for stop_update in trip_update.stop_time_update:
-                if stop_update.stop_id in stop_ids:
-                    if stop_update.HasField("departure") and stop_update.departure.HasField("time"): # sprawdzenie departure
-                        unix_time = stop_update.departure.time
-                    elif stop_update.HasField("arrival") and stop_update.arrival.HasField("time"): # fallback
-                        unix_time = stop_update.arrival.time
-                    else:
-                        continue
-                    departure_dt = datetime.fromtimestamp(unix_time)  # czas odjazdu
-                    time_delta = departure_dt - datetime.now()  # timedelta do odjazdu
-                    if time_delta.total_seconds() < 0: # jesli odjazd po polnocy
-                        time_delta += timedelta(days=1)
-                    trip_id = trip_update.trip.trip_id
-                    route_id = block_to_route.get(trip_id)
-                    line_number = route_to_number.get(route_id) if route_id else None
-                    dest = block_to_dest.get(trip_id) if trip_id else None
-                    ignore_bus.append(trip_id)
-                    departure_td = timedelta(
-                        hours=departure_dt.hour,
-                        minutes=departure_dt.minute,
-                        seconds=departure_dt.second
-                    )
-                    minutes = int(time_delta.total_seconds() // 60)
-                    if minutes <= 0:
-                        minutes_str = "0 min"
-                    else:
-                        minutes_str = f"{minutes} min"
-                    if minutes_str == "1439 min":
-                        minutes_str = "0 min"
-                    live = 1
-                    tstop = stop_update.stop_id
-                    delay_seconds = stop_update.departure.delay
-                    delay_minutes = delay_seconds // 60
-                    if delay_minutes > 5:
-                        live = 2
+        for entity in feed.entity:
+            if entity.HasField("trip_update"): # czy wogole jest kurs, jesli nie ma to kod pozniej nie zadziala
+                trip_update = entity.trip_update
+                for stop_update in trip_update.stop_time_update:
+                    if stop_update.stop_id in stop_ids:
+                        if stop_update.HasField("departure") and stop_update.departure.HasField("time"): # sprawdzenie departure
+                            unix_time = stop_update.departure.time
+                        elif stop_update.HasField("arrival") and stop_update.arrival.HasField("time"): # fallback
+                            unix_time = stop_update.arrival.time
+                        else:
+                            continue
+                        departure_dt = datetime.fromtimestamp(unix_time)  # czas odjazdu
+                        time_delta = departure_dt - datetime.now()  # timedelta do odjazdu
+                        if time_delta.total_seconds() < 0: # jesli odjazd po polnocy
+                            time_delta += timedelta(days=1)
+                        trip_id = trip_update.trip.trip_id
+                        route_id = block_to_route.get(trip_id)
+                        line_number = route_to_number.get(route_id) if route_id else None
+                        dest = block_to_dest.get(trip_id) if trip_id else None
+                        ignore_bus.append(trip_id)
+                        departure_td = timedelta(
+                            hours=departure_dt.hour,
+                            minutes=departure_dt.minute,
+                            seconds=departure_dt.second
+                        )
+                        minutes = int(time_delta.total_seconds() // 60)
+                        if minutes <= 0:
+                            minutes_str = "0 min"
+                        else:
+                            minutes_str = f"{minutes} min"
+                        if minutes_str == "1439 min":
+                            minutes_str = "0 min"
+                        live = 1
+                        tstop = stop_update.stop_id
+                        delay_seconds = stop_update.departure.delay
+                        delay_minutes = delay_seconds // 60
+                        if delay_minutes > 5:
+                            live = 2
 
-                    upcoming_trips.append((departure_td, minutes_str, line_number, dest, trip_id, live, tstop, delay_minutes))
+                        upcoming_trips.append((departure_td, minutes_str, line_number, dest, trip_id, live, tstop, delay_minutes))
 
 def offline(preloaded, system):
     active_stop_ids = stop_ids if system == "krk" else kml_stop_ids
@@ -318,6 +339,7 @@ def offline(preloaded, system):
                                            f"{int((dep_time.total_seconds() % 3600) // 60):02d}"
                             upcoming_trips.append((arrival_td, dep_time_str, line_number, dest, trip_id, live, tstop, delay_minutes))
                             #ignore_bus.append(trip_id)
+
 def preload_stop_times(base_dir, system):
     stop_times = base_dir / "stop_times.txt"
     active_stop_ids = stop_ids if system == "krk" else list(kml_stop_ids.keys())
@@ -330,7 +352,8 @@ def preload_stop_times(base_dir, system):
     return relevant
 
 def display(data):
-    while len(data['czas']) < 4:
+    while len(data['czas']) < ilosc\
+            :
         data['czas'].append("")
         data['linia'].append("")
         data['kierunek'].append("")
@@ -346,12 +369,12 @@ def display(data):
     czasczas = f"{now.hour:02d}:{now.minute:02d}"
     newdata = []
     busx = 0
-    while busx < 4:
+    while busx < ilosc:
         if len(data['kierunek'][busx]) >= 19:
             data['kierunek'][busx] = data['kierunek'][busx][:18] + "."
         busx += 1
     busx = 0
-    while busx < 4:
+    while busx < ilosc:
         newdata.append([
             data['linia'][busx],
             data['kierunek'][busx],
@@ -385,10 +408,13 @@ with config.open(newline="", encoding="utf-8-sig") as config:
     direction = config.readline().strip()
     kml = config.readline().strip()
     czcionka = config.readline().strip()
+    ilosc = config.readline().strip()
     print("Przystanek: " + str(stop))
     print("Numer przystanka: " + str(direction))
     print("Status KML: " + str(kml))
     print("Czcionka: " + str(czcionka))
+    print("Ilosc: " + str(ilosc))
+    ilosc = int(ilosc)
 
 przystanek = str(stop + ", " + direction)
 przystanek_dir.set(przystanek)
@@ -440,7 +466,7 @@ print(helvetica_bold.exists())
 
 if czcionka == "1":
     font_id = QFontDatabase.addApplicationFont(str(clearview))
-elif czcionka == "1":
+elif czcionka == "2":
     font_id = QFontDatabase.addApplicationFont(str(helvetica))
 else:
     font_id = QFontDatabase.addApplicationFont(str(helvetica_bold))
@@ -457,7 +483,8 @@ preloaded_kml = preload_stop_times(GTFS_KML, "kml") if kml == "1" else []
 def main():
     global run
     global upcoming_trips
-    timetable_update()
+    threading.Thread(target=timetable_update, daemon=True).start()  # w tle
+    refresh_time()
     refresh_time()
     upcoming_trips.clear()
     ignore_bus.clear()
@@ -465,23 +492,25 @@ def main():
     linia.clear()
     kierunek.clear()
     na_zywo.clear()
+    internet = internet_available()
+    print("Internet: " + str(internet))
     # tak moglem to zapisac jakos lepiej i nie, nie chce mi sie
     try:
         online(URL="https://gtfs.ztp.krakow.pl/TripUpdates_A.pb")
         online(URL="https://gtfs.ztp.krakow.pl/TripUpdates_M.pb")
     except requests.exceptions.RequestException as e:
-        os.system('cls' if os.name == 'nt' else 'clear') # antywindows bugfix
-        print(str(time) + " >> last update")
-        print("Error: ", e)
-        print("Brawo Kraków ! ! !")
-        return False
+        if internet == False:
+            print("Brak intenetu. . .")
+        else:
+            print(str(time) + " >> last update")
+            print("Error: ", e)
+            print("Brawo Kraków ! ! !")
+            return False
     offline(preloaded_krk_a, "krk")
     offline(preloaded_krk_m, "krk")
     if kml == "1":
         offline(preloaded_kml, "kml")
     stops_data.clear()
-
-    os.system('cls' if os.name == 'nt' else 'clear')
     print(str(time) + " >> Last update")
 
     all_data = {"czas": [], "linia": [], "kierunek": [], "na_zywo": []}
@@ -502,17 +531,16 @@ def main():
         tstop = kml_stop_ids.get(tstop, tstop)
         tstop = tstop[-2:]
         #print(f"{arrival_str} >> {line} >> {dest} >> {status} >> {trip_id} >> {tstop}")
-        opt_trips.append(trip_id)
         if tstop not in stops_data:
             stops_data[tstop] = {"czas": [], "linia": [], "kierunek": [], "na_zywo": []} #
-        if len(stops_data[tstop]["czas"]) < 4:
+        if len(stops_data[tstop]["czas"]) < ilosc:
             stops_data[tstop]["czas"].append(arrival_str) # sortowanie danych do odpowienich katergorii
             stops_data[tstop]["linia"].append(line)
             stops_data[tstop]["kierunek"].append(dest)
             stops_data[tstop]["na_zywo"].append(live)
             if direction == tstop:
                 print(f"{arrival_str} >> {line} >> {dest} >> {live} >> {tstop} >> {trip_id}")
-            if len(all_data["czas"]) < 4:
+            if len(all_data["czas"]) < ilosc:
                 all_data["czas"].append(arrival_str)  # 00
                 all_data["linia"].append(line)
                 all_data["kierunek"].append(dest)
@@ -520,16 +548,20 @@ def main():
                 print(f"{arrival_str} >> {line} >> {dest} >> {live} >> {tstop} >> {trip_id}")
 
     print(ignore_bus)
-    db.reference("00").set(all_data) # zapisanie 00
-    root_ref = db.reference()
-    for stop_id, data in stops_data.items(): # tworzenie folderow 00 01 itp
-        root_ref.child(stop_id).set(data) # np. w 01 daje wszystko
+    try:
+        db.reference("00").set(all_data) # zapisanie 00
+        root_ref = db.reference()
+        for stop_id, data in stops_data.items(): # tworzenie folderow 00 01 itp
+            root_ref.child(stop_id).set(data) # np. w 01 daje wszystko
+    except Exception as e:
+        print("Firebase offline:", e)
     display(all_data)
     return True
 
-while 1 < 2:
-    main()
-    timer = QTimer() # specjalna petla qt
-    timer.timeout.connect(main)
-    timer.start(20000) # 20s
-    sys.exit(app.exec())
+main()  # run once at start
+
+timer = QTimer()
+timer.timeout.connect(main)
+timer.start(20000)
+
+sys.exit(app.exec())
