@@ -182,7 +182,6 @@ def refresh_time(): # poniewaz czas sie pieprzy po sleepach
     czasczas = czasczas[:-3]
     print(czasczas)
     czasczas_dir.set(czasczas)
-    time_module.sleep(1)
 
 def stop_find(base_dir):
     stops = base_dir / "stops.txt"
@@ -399,9 +398,7 @@ def display(data):
             else:
                 stop_label.setStyleSheet("color: white;")
             layout.addWidget(stop_label, row, col)
-    window.setLayout(layout)
     window.setStyleSheet("background-color: black;")
-    window.showFullScreen()
 
 with config.open(newline="", encoding="utf-8-sig") as config:
     stop = config.readline().strip()
@@ -456,6 +453,10 @@ app = QApplication(sys.argv)
 app.setOverrideCursor(Qt.CursorShape.BlankCursor)
 window = QWidget()
 layout = QGridLayout()
+window.setLayout(layout)
+window.setStyleSheet("background-color: black;")
+window.move(0, 0)
+window.showFullScreen()
 
 clearview = PROJECT_DIR / "Clearview Font.ttf"
 helvetica = PROJECT_DIR / "Helvetica.ttf"
@@ -483,8 +484,6 @@ preloaded_kml = preload_stop_times(GTFS_KML, "kml") if kml == "1" else []
 def main():
     global run
     global upcoming_trips
-    threading.Thread(target=timetable_update, daemon=True).start()  # w tle
-    refresh_time()
     refresh_time()
     upcoming_trips.clear()
     ignore_bus.clear()
@@ -505,7 +504,6 @@ def main():
             print(str(time) + " >> last update")
             print("Error: ", e)
             print("Brawo Kraków ! ! !")
-            return False
     offline(preloaded_krk_a, "krk")
     offline(preloaded_krk_m, "krk")
     if kml == "1":
@@ -558,8 +556,8 @@ def main():
     display(all_data)
     return True
 
-main()  # run once at start
-
+threading.Thread(target=timetable_update, daemon=True).start()
+main()
 timer = QTimer()
 timer.timeout.connect(main)
 timer.start(20000)
