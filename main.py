@@ -486,11 +486,14 @@ print("kml_stop_ids:",kml_stop_ids)
 app = QApplication(sys.argv)
 app.setOverrideCursor(Qt.CursorShape.BlankCursor)
 window = QWidget()
+window.setFixedSize(1920, 1080)
 layout = QGridLayout()
 window.setLayout(layout)
 window.setStyleSheet("background-color: black;")
 window.move(0, 0)
-window.showFullScreen()
+window.show()
+window.raise_()
+window.activateWindow()
 
 clearview = PROJECT_DIR / "Clearview Font.ttf"
 helvetica = PROJECT_DIR / "Helvetica.ttf"
@@ -587,6 +590,8 @@ def main():
             root_ref.child(stop_id).set(data) # np. w 01 daje wszystko
     except Exception as e:
         print("Firebase offline:", e)
+    print(f"Szerokość okna: {window.width()}, Szerokość layoutu: {layout.contentsRect().width()}")
+    print(f"Wysokość okna: {window.height()}, Wysokość layoutu: {layout.contentsRect().height()}")
     display(all_data)
     return True
 
