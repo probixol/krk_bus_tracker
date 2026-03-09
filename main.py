@@ -15,7 +15,7 @@ import time as time_module
 import requests, csv, zipfile, math, os, io
 import shutil, PyQt6, sys
 import threading
-import socket
+import socket, sqlite3
 import firebase_admin
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import QApplication, QWidget, QGridLayout, QLabel
@@ -101,6 +101,28 @@ kierunek_dir = db.reference("00/kierunek")
 live_dir = db.reference("00/live")
 przystanek_dir = database_dir.child('przystanek')
 czasczas_dir = database_dir.child('czasczas')
+
+
+def update_db(base_dir, db_path):
+    print(f"Indeksowanie bazy dla {base_dir.name}... (to chwilę potrwa)")
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    # tworzenie tabeli
+    cursor.execute("DROP TABLE IF EXISTS stop_times")
+    cursor.execute("CREATE TABLE stop_times (trip_id TEXT, arrival_time TEXT, stop_id TEXT)")
+
+    stop_times_txt = base_dir / "stop_times.txt"
+    with stop_times_txt.open(newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        # Wczytujemy dane partiami, żeby nie zapchać RAMu
+        to_db = [(r['trip_id'], r['arrival_time'], r['stop_id']) for r in reader]
+        cursor.executemany("INSERT INTO stop_times VALUES (?, ?, ?);", to_db)
+
+    # indeks jest szybszy
+    cursor.execute("CREATE INDEX idx_stop ON stop_times(stop_id)")
+    conn.commit()
+    conn.close()
+    print("Indeksowanie zakończone!")
 
 def internet_available():
     try:
@@ -339,15 +361,27 @@ def offline(preloaded, system):
                             upcoming_trips.append((arrival_td, dep_time_str, line_number, dest, trip_id, live, tstop, delay_minutes))
                             #ignore_bus.append(trip_id)
 
+
 def preload_stop_times(base_dir, system):
-    stop_times = base_dir / "stop_times.txt"
+    db_path = base_dir / "data.db"
+
+    # Jeśli baza nie istnieje (np. po aktualizacji ZIP), stwórz ją
+    if not db_path.exists():
+        update_db(base_dir, db_path)
+
     active_stop_ids = stop_ids if system == "krk" else list(kml_stop_ids.keys())
     relevant = []
-    with stop_times.open(newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row["stop_id"] in active_stop_ids:
-                relevant.append(row)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row  # Dzięki temu wynik działa jak słownik row["stop_id"]
+    cursor = conn.cursor()
+
+    # Wyciągamy tylko te rzędy, które pasują do Twoich przystanków
+    for s_id in active_stop_ids:
+        cursor.execute("SELECT * FROM stop_times WHERE stop_id=?", (s_id,))
+        relevant.extend([dict(row) for row in cursor.fetchall()])
+
+    conn.close()
     return relevant
 
 def display(data):
