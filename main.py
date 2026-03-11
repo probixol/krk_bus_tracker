@@ -1,8 +1,7 @@
 # najgorzej zaprojektowany kod nagroda:
 # a i tramwaje nie sa supportowane ups xd lol trol
 
-
-try: # protobuf check
+try:  # protobuf check
     import requests
     from google.transit import gtfs_realtime_pb2
 except ModuleNotFoundError as e:
@@ -13,7 +12,7 @@ except ModuleNotFoundError as e:
 
 import time as time_module
 import requests, csv, zipfile, math, os, io
-import shutil, PyQt6, sys
+import shutil, PyQt6, sys, json
 import threading
 import socket, sqlite3
 import firebase_admin
@@ -25,6 +24,7 @@ from firebase_admin import db
 from google.transit import gtfs_realtime_pb2
 from datetime import datetime, timedelta
 from pathlib import Path
+
 now = datetime.now()
 time = timedelta(hours=now.hour, minutes=now.minute, seconds=now.second)
 time_nosec = timedelta(hours=now.hour, minutes=now.minute)
@@ -56,26 +56,28 @@ linia_dict = {}
 stops_data = {}
 kierunek_dict = {}
 na_zywo_dict = {}
-block_to_route = {} # slownik blockow na routy
+block_to_route = {}  # slownik blockow na routy
 block_to_dest = {}
 block_to_direction = {}
 block_to_service = {}
 route_to_number = {}  # slownik routow na number linii
-socket.setdefaulttimeout(10)
+socket.setdefaulttimeout(15)
+
 # uniwersalne foldery
 PROJECT_DIR = Path(__file__).resolve().parent  # glowny folder
 GTFS_KRK_A = PROJECT_DIR / "GTFS_KRK_A"
 GTFS_KRK_M = PROJECT_DIR / "GTFS_KRK_M"
 GTFS_KML = PROJECT_DIR / "ald-gtfs"
 config = PROJECT_DIR / "CONFIG.txt"
+custom = PROJECT_DIR / "custom.json"
 
 # ta czesc kodu od googla
 KEY_PATH = PROJECT_DIR / "krk-bus-tracker-firebase-adminsdk-fbsvc-0b46cc464b.json"
 DATABASE_URL = 'https://krk-bus-tracker-default-rtdb.europe-west1.firebasedatabase.app'
 try:
-    if not os.path.exists(KEY_PATH): # klucz check
+    if not os.path.exists(KEY_PATH):  # klucz check
         raise FileNotFoundError(f"Nie znalzeiono klucza pod adresem: {KEY_PATH}")
-    cred = credentials.Certificate(KEY_PATH)
+    cred = credentials.Certificate(str(KEY_PATH))
     firebase_admin.initialize_app(cred, {
         'databaseURL': DATABASE_URL
     })
@@ -101,7 +103,6 @@ kierunek_dir = db.reference("00/kierunek")
 live_dir = db.reference("00/live")
 przystanek_dir = database_dir.child('przystanek')
 czasczas_dir = database_dir.child('czasczas')
-
 
 def update_db(base_dir, db_path):
     print(f"Indeksowanie bazy dla {base_dir.name}... (to chwilę potrwa)")
@@ -157,10 +158,13 @@ def timetable_update():
                     zip_file.extractall(folder)
                     print(f"Pobrano i wypakowano: {url}")
                 except Exception as e:
-                    print("GTFS update failed:", e)
+                    print("Błąd:", e)
 
             with data.open("w", encoding="utf-8") as f:
                 f.write(today_str)
+            translator(GTFS_KRK_A)
+            translator(GTFS_KRK_M)
+            translator(GTFS_KML)
 
 def translator(base_dir):
     trips = base_dir / "trips.txt"
@@ -178,9 +182,8 @@ def translator(base_dir):
         for row in reader:
             route_to_number[row["route_id"]] = row["route_short_name"]
 
-
-PROJECT_DIR = Path(__file__).resolve().parent # ogolny folder
-GTFS_DIRS = [ # foldery poszczegolnych gtfs
+PROJECT_DIR = Path(__file__).resolve().parent  # ogolny folder
+GTFS_DIRS = [  # foldery poszczegolnych gtfs
     PROJECT_DIR / "GTFS_KRK_A",
     PROJECT_DIR / "GTFS_KRK_M",
     PROJECT_DIR / "ald-gtfs",
@@ -194,7 +197,7 @@ def parse_gtfs_time(time_str):
     h, m, s = map(int, time_str.split(":"))
     return timedelta(hours=h, minutes=m, seconds=s)
 
-def refresh_time(): # poniewaz czas sie pieprzy po sleepach
+def refresh_time():  # poniewaz czas sie pieprzy po sleepach
     global now, time, time_nosec, today
     now = datetime.now()
     time = timedelta(hours=now.hour, minutes=now.minute, seconds=now.second)
@@ -203,13 +206,20 @@ def refresh_time(): # poniewaz czas sie pieprzy po sleepach
     czasczas = str(time_nosec)
     czasczas = czasczas[:-3]
     print(czasczas)
-    czasczas_dir.set(czasczas)
+
+    def push_time():
+        try:
+            czasczas_dir.set(czasczas)
+        except:
+            pass
+
+    threading.Thread(target=push_time, daemon=True).start()
 
 def stop_find(base_dir):
     stops = base_dir / "stops.txt"
     y = 0
     found = False
-    with stops.open(newline="", encoding="utf-8-sig") as f: # lista wybranych przystankow KRK!!!
+    with stops.open(newline="", encoding="utf-8-sig") as f:  # lista wybranych przystankow KRK!!!
         reader = csv.DictReader(f)
         for row in reader:
             if row["stop_name"] == stop:
@@ -226,8 +236,6 @@ def stop_find(base_dir):
                     stop_ids.append(row["stop_id"])
                     found = True
                     print("Przystanek KRK >> " + row["stop_id"])
-                    print(stop_lon)
-                    print(stop_lat)
                     break
                 if direction == "00":
                     stop_lat.append(float(row["stop_lat"]))
@@ -242,37 +250,28 @@ def online(URL):
     if internet == True:
         feed = gtfs_realtime_pb2.FeedMessage()
         try:
-            response = requests.get(URL, headers=headers, timeout=10)
+            response = requests.get(URL, headers=headers, timeout=15)
             response.raise_for_status()
-        except requests.exceptions.ConnectionError:
-            print("Brak internetu")
-            return
-        except requests.exceptions.Timeout:
-            print("Timeout")
-            return
-        except requests.exceptions.HTTPError as e:
-            print("Brawo krakow:", e)
-            raise
-        try:
             feed.ParseFromString(response.content)
         except Exception as e:
-            print(f"Blad parsowania protobufa: {e}")
+            print(f"Błąd online ({URL}): {e}")
             return
 
         for entity in feed.entity:
-            if entity.HasField("trip_update"): # czy wogole jest kurs, jesli nie ma to kod pozniej nie zadziala
+            if entity.HasField("trip_update"):  # czy wogole jest kurs, jesli nie ma to kod pozniej nie zadziala
                 trip_update = entity.trip_update
                 for stop_update in trip_update.stop_time_update:
                     if stop_update.stop_id in stop_ids:
-                        if stop_update.HasField("departure") and stop_update.departure.HasField("time"): # sprawdzenie departure
+                        if stop_update.HasField("departure") and stop_update.departure.HasField(
+                                "time"):  # sprawdzenie departure
                             unix_time = stop_update.departure.time
-                        elif stop_update.HasField("arrival") and stop_update.arrival.HasField("time"): # fallback
+                        elif stop_update.HasField("arrival") and stop_update.arrival.HasField("time"):  # fallback
                             unix_time = stop_update.arrival.time
                         else:
                             continue
                         departure_dt = datetime.fromtimestamp(unix_time)  # czas odjazdu
                         time_delta = departure_dt - datetime.now()  # timedelta do odjazdu
-                        if time_delta.total_seconds() < 0: # jesli odjazd po polnocy
+                        if time_delta.total_seconds() < 0:  # jesli odjazd po polnocy
                             time_delta += timedelta(days=1)
                         trip_id = trip_update.trip.trip_id
                         route_id = block_to_route.get(trip_id)
@@ -298,22 +297,23 @@ def online(URL):
                         if delay_minutes > 5:
                             live = 2
 
-                        upcoming_trips.append((departure_td, minutes_str, line_number, dest, trip_id, live, tstop, delay_minutes))
+                        upcoming_trips.append(
+                            (departure_td, minutes_str, line_number, dest, trip_id, live, tstop, delay_minutes))
 
 def offline(preloaded, system):
     active_stop_ids = stop_ids if system == "krk" else kml_stop_ids
     if not active_stop_ids:
         return
     for row in preloaded:
-        week_to_krk = {0: 1, 1: 1, 2: 1, 3: 5, 4: 4, 5: 2, 6: 3} # pilka zmylka
+        week_to_krk = {0: 1, 1: 1, 2: 1, 3: 5, 4: 4, 5: 2, 6: 3}  # pilka zmylka
         week_to_krk_str = {"PO": 1, "CZ": 5, "PT": 4, "SO": 2, "SW": 3}
-        week_to_kml = {0: 7952, 1: 7952, 2: 7952, 3: 7952, 4: 7952, 5: 7953, 6: 7954} # serdeczne gratulacje kml
+        week_to_kml = {0: 7952, 1: 7952, 2: 7952, 3: 7952, 4: 7952, 5: 7953, 6: 7954}  # serdeczne gratulacje kml
         delay_minutes = 0
         if system == "krk":
             if time < timedelta(hours=3):
                 yesterday_check = (week_to_krk[today], week_to_krk[(today - 1) % 7])
             else:
-                yesterday_check = (week_to_krk[today],) # nawiasy zeby byla tupla (lista) a nie int
+                yesterday_check = (week_to_krk[today],)  # nawiasy zeby byla tupla (lista) a nie int
         if system == "kml":
             if time < timedelta(hours=3):
                 yesterday_check = (week_to_kml[today], week_to_kml[(today - 1) % 7])
@@ -334,7 +334,7 @@ def offline(preloaded, system):
                     if week_number.isdigit():
                         week_number = int(week_number)
                     else:
-                        week_number = week_to_krk_str[week_number]
+                        week_number = week_to_krk_str.get(week_number, 1)
                     if week_number in yesterday_check:
                         time_diff = arrival_td - time_nosec
                         route_id = block_to_route.get(trip_id)
@@ -350,7 +350,6 @@ def offline(preloaded, system):
                             if minutes_str == "1439 min":
                                 minutes_str = "0 min"
                             upcoming_trips.append((arrival_td, minutes_str, line_number, dest, trip_id, live, tstop, delay_minutes))
-                            #ignore_bus.append(trip_id)
                         else:
                             h, m, s = map(int, row["arrival_time"].split(":"))
                             dep_time = timedelta(hours=h, minutes=m, seconds=s)
@@ -359,93 +358,63 @@ def offline(preloaded, system):
                             dep_time_str = f"{int(dep_time.total_seconds() // 3600):02d}:" \
                                            f"{int((dep_time.total_seconds() % 3600) // 60):02d}"
                             upcoming_trips.append((arrival_td, dep_time_str, line_number, dest, trip_id, live, tstop, delay_minutes))
-                            #ignore_bus.append(trip_id)
-
 
 def preload_stop_times(base_dir, system):
     db_path = base_dir / "data.db"
-
-    # Jeśli baza nie istnieje (np. po aktualizacji ZIP), stwórz ją
     if not db_path.exists():
         update_db(base_dir, db_path)
-
     active_stop_ids = stop_ids if system == "krk" else list(kml_stop_ids.keys())
     relevant = []
-
     conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row  # Dzięki temu wynik działa jak słownik row["stop_id"]
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-
-    # Wyciągamy tylko te rzędy, które pasują do Twoich przystanków
     for s_id in active_stop_ids:
         cursor.execute("SELECT * FROM stop_times WHERE stop_id=?", (s_id,))
         relevant.extend([dict(row) for row in cursor.fetchall()])
-
     conn.close()
     return relevant
 
 def display(data):
-    # Dopełnianie danych do ilosc
+    # Dopełnianie danych
     while len(data['czas']) < ilosc:
         data['czas'].append("")
         data['linia'].append("")
         data['kierunek'].append("")
         data['na_zywo'].append(0)
 
-    # Przygotowanie danych do wyświetlenia
-    newdata = []
-    for i in range(ilosc):
-        kierunek_text = data['kierunek'][i]
-        if len(kierunek_text) >= 19:
-            kierunek_text = kierunek_text[:18] + "."
-        newdata.append([
-            data['linia'][i],
-            kierunek_text,
-            data['czas'][i],
-            data['na_zywo'][i]
-        ])
-
-    # 1. Aktualizacja zegara (Header)
-    now = datetime.now()
-    czasczas = f"{now.hour:02d}:{now.minute:02d}"
     header_item = layout.itemAtPosition(0, 0)
     if header_item and header_item.widget():
-        header_item.widget().setText(czasczas)
+        header_item.widget().setText(datetime.now().strftime("%H:%M"))
 
-    # 2. Aktualizacja wierszy (szukamy labeli zamiast tworzyć nowe)
-    for row_idx, row_data in enumerate(newdata, start=1):
-        for col_idx, text in enumerate(row_data[:-1]):
-            item = layout.itemAtPosition(row_idx, col_idx)
+    for row_idx in range(ilosc):
+        lin_text = data['linia'][row_idx]
+        kie_text = data['kierunek'][row_idx]
+        if len(kie_text) >= 19:
+            kie_text = kie_text[:18] + "."
+        cza_text = data['czas'][row_idx]
+        status = data['na_zywo'][row_idx]
+
+        row_vals = [lin_text, kie_text, cza_text]
+        for col_idx in range(3):
+            item = layout.itemAtPosition(row_idx + 1, col_idx)
             if item and item.widget():
-                stop_label = item.widget()
-                stop_label.setText(str(text))
-
-                # Kolorowanie
-                status = row_data[-1]
+                lbl = item.widget()
+                lbl.setText(str(row_vals[col_idx]))
                 if status == 1:
-                    stop_label.setStyleSheet("color: #32CD32;")
+                    lbl.setStyleSheet("color: #32CD32;")
                 elif status == 2:
-                    stop_label.setStyleSheet("color: #DB143A;")
+                    lbl.setStyleSheet("color: #DB143A;")
                 else:
-                    stop_label.setStyleSheet("color: white;")
+                    lbl.setStyleSheet("color: white;")
 
-    window.setStyleSheet("background-color: black;")
+with config.open(newline="", encoding="utf-8-sig") as config_file:
+    stop = config_file.readline().strip()
+    direction = config_file.readline().strip()
+    kml = config_file.readline().strip()
+    czcionka = config_file.readline().strip()
+    ilosc = int(config_file.readline().strip())
 
-with config.open(newline="", encoding="utf-8-sig") as config:
-    stop = config.readline().strip()
-    direction = config.readline().strip()
-    kml = config.readline().strip()
-    czcionka = config.readline().strip()
-    ilosc = config.readline().strip()
-    print("Przystanek: " + str(stop))
-    print("Numer przystanka: " + str(direction))
-    print("Status KML: " + str(kml))
-    print("Czcionka: " + str(czcionka))
-    print("Ilosc: " + str(ilosc))
-    ilosc = int(ilosc)
-
-przystanek = str(stop + ", " + direction)
-przystanek_dir.set(przystanek)
+przystanek_dir.set(str(stop + ", " + direction))
 
 translator(GTFS_KRK_A)
 translator(GTFS_KRK_M)
@@ -453,33 +422,24 @@ translator(GTFS_KML)
 stop_find(GTFS_KRK_A)
 stop_find(GTFS_KRK_M)
 krk_count = len(stop_ids)
-print("Liczba przystankow KRK: " + str(krk_count))
 current_stop = 0
 
-# mmmm kocham kiedy przystanki mozna tylko wyjac z ich lokalizacji mmmmm
 base_dir = GTFS_KML
 kml_stops = base_dir / "stops.txt"
-potentials = []
 while current_stop < krk_count:
+    potentials = []
     if stop_lat and stop_lon:
         with kml_stops.open(newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                # wzor na odleglosc dwoch punktow SHOUTOUT DLA PIEKARSKIEJ
-                current_lat = float(row["stop_lat"])
-                current_lon = float(row["stop_lon"])
+                current_lat, current_lon = float(row["stop_lat"]), float(row["stop_lon"])
                 distance = math.sqrt(
                     (current_lat - stop_lat[current_stop]) ** 2 + (current_lon - stop_lon[current_stop]) ** 2)
                 potentials.append((distance, row["stop_id"]))
             potentials.sort(key=lambda x: x[0])
             kml_stop_ids[potentials[0][1]] = stop_ids[current_stop]
-            print("Przystanek KML >> " + str(potentials[0][1]))
-            potentials.clear()
             current_stop += 1
-print("stop_ids:", stop_ids)
-print("stop_lat:", stop_lat)
-print("stop_lon:", stop_lon)
-print("kml_stop_ids:",kml_stop_ids)
+
 app = QApplication(sys.argv)
 app.setOverrideCursor(Qt.CursorShape.BlankCursor)
 window = QWidget()
@@ -487,131 +447,123 @@ window.setFixedSize(1920, 1080)
 layout = QGridLayout()
 window.setLayout(layout)
 window.setStyleSheet("background-color: black;")
-window.move(0, 0)
-window.show()
-window.raise_()
-window.activateWindow()
 
-clearview = PROJECT_DIR / "Clearview Font.ttf"
-helvetica = PROJECT_DIR / "Helvetica.ttf"
-helvetica_bold = PROJECT_DIR / "Helvetica-Bold.ttf"
-
-print(helvetica_bold)
-print(helvetica_bold.exists())
-
+f_name = "Helvetica-Bold.ttf"
 if czcionka == "1":
-    font_id = QFontDatabase.addApplicationFont(str(clearview))
+    f_name = "Clearview Font.ttf"
 elif czcionka == "2":
-    font_id = QFontDatabase.addApplicationFont(str(helvetica))
-else:
-    font_id = QFontDatabase.addApplicationFont(str(helvetica_bold))
-if font_id == -1:
-    print("Failed to load font")
-    sys.exit()
-font_family = QFontDatabase.applicationFontFamilies(font_id)[0]
-custom_font = QFont(font_family, 91)
+    f_name = "Helvetica.ttf"
+font_id = QFontDatabase.addApplicationFont(str(PROJECT_DIR / f_name))
+custom_font = QFont(QFontDatabase.applicationFontFamilies(font_id)[0], 91)
+
+header_label = QLabel("--:--")
+header_label.setFont(custom_font);
+header_label.setStyleSheet("color: white;")
+layout.addWidget(header_label, 0, 0)
+for r in range(1, ilosc + 1):
+    for c in range(3):
+        lbl = QLabel("");
+        lbl.setFont(custom_font);
+        lbl.setStyleSheet("color: white;")
+        layout.addWidget(lbl, r, c)
+layout.setColumnStretch(1, 10)
 
 preloaded_krk_a = preload_stop_times(GTFS_KRK_A, "krk")
 preloaded_krk_m = preload_stop_times(GTFS_KRK_M, "krk")
 preloaded_kml = preload_stop_times(GTFS_KML, "kml") if kml == "1" else []
 
+is_updating = False
+
 def main():
-    global run
-    global upcoming_trips
-    refresh_time()
-    upcoming_trips.clear()
-    ignore_bus.clear()
-    czas.clear()
-    linia.clear()
-    kierunek.clear()
-    na_zywo.clear()
-    internet = internet_available()
-    print("Internet: " + str(internet))
-    # tak moglem to zapisac jakos lepiej i nie, nie chce mi sie
+    global is_updating, upcoming_trips, ignore_bus
+    if is_updating: return
+    is_updating = True
     try:
-        online(URL="https://gtfs.ztp.krakow.pl/TripUpdates_A.pb")
-        online(URL="https://gtfs.ztp.krakow.pl/TripUpdates_M.pb")
-    except requests.exceptions.RequestException as e:
-        if internet == False:
-            print("Brak intenetu. . .")
-        else:
-            print(str(time) + " >> last update")
-            print("Error: ", e)
-            print("Brawo Kraków ! ! !")
-    offline(preloaded_krk_a, "krk")
-    offline(preloaded_krk_m, "krk")
-    if kml == "1":
-        offline(preloaded_kml, "kml")
-    stops_data.clear()
-    print(str(time) + " >> Last update")
+        refresh_time()
+        upcoming_trips.clear()
+        ignore_bus.clear()
+        stops_data.clear()
+        online("https://gtfs.ztp.krakow.pl/TripUpdates_A.pb")
+        online("https://gtfs.ztp.krakow.pl/TripUpdates_M.pb")
+        offline(preloaded_krk_a, "krk")
+        offline(preloaded_krk_m, "krk")
+        if kml == "1": offline(preloaded_kml, "kml")
 
-    all_data = {"czas": [], "linia": [], "kierunek": [], "na_zywo": []}
+        try:
+            with custom.open(newline="", encoding="utf-8-sig") as f:
+                f = json.load(f)
+                for linia, kursy in f.items():
+                    print(f"Linia: {linia}")
+                    for kurs in kursy:
+                        if direction == kurs['direction'] or direction == "00":
+                            if today in kurs['days']:
+                                h, m = map(int, kurs["time"].split(":"))
+                                tenkurs = timedelta(hours=h, minutes=m, )
+                                if tenkurs > time_nosec:
+                                    print("yupi jej")
+                                    if tenkurs > timedelta(hours=24):
+                                        tenkurs = tenkurs - timedelta(hours=24)
+                                    dep_time_str = f"{int(tenkurs.total_seconds() // 3600):02d}:" \
+                                                   f"{int((tenkurs.total_seconds() % 3600) // 60):02d}"
+                                    time_diff = tenkurs - time_nosec
+                                    if time_diff < timedelta(hours=1):
+                                        minutes = int(time_diff.total_seconds() // 60)
+                                        if minutes <= 0:
+                                            dep_time_str = "0 min"
+                                        else:
+                                            dep_time_str = f"{minutes} min"
+                                        if dep_time_str == "1439 min":
+                                            dep_time_str = "0 min"
+                                    upcoming_trips.append(
+                                        (tenkurs, dep_time_str, kurs['line'], kurs['dest'], "manual_id", 0,
+                                         kurs['direction'], 0))
+        except json.JSONDecodeError:
+            print("Plik custom.json ma złą strukture. (Czy przecinki zostały dobrze postawione?)")
+        except Exception as e:
+            print(f"Błąd custom.json: {e}")
 
-    upcoming_trips.sort(key=lambda x: x[0])
-    seen = set() # kml wylew bugfix
-    deduped = []
-    for trip in upcoming_trips:
-        key = (trip[0], trip[2], trip[6])  # (czas, linia, tstop)
-        if key not in seen:
-            seen.add(key)
-            deduped.append(trip)
-    upcoming_trips = deduped
+        upcoming_trips.sort(key=lambda x: x[0])
+        print(upcoming_trips)
+        seen = set();
+        deduped = []
+        for trip in upcoming_trips:
+            key = (trip[0], trip[2], trip[6])
+            if key not in seen:
+                seen.add(key);
+                deduped.append(trip)
+        upcoming_trips = deduped
 
-    for _, arrival_str, line, dest, trip_id, live, tstop, delay_minutes in upcoming_trips:
-        line = line or "??"  # fallback gdyby nie bylo
-        dest = dest or "??"
-        tstop = kml_stop_ids.get(tstop, tstop)
-        tstop = tstop[-2:]
-        #print(f"{arrival_str} >> {line} >> {dest} >> {status} >> {trip_id} >> {tstop}")
-        if tstop not in stops_data:
-            stops_data[tstop] = {"czas": [], "linia": [], "kierunek": [], "na_zywo": []} #
-        if len(stops_data[tstop]["czas"]) < ilosc:
-            stops_data[tstop]["czas"].append(arrival_str) # sortowanie danych do odpowienich katergorii
-            stops_data[tstop]["linia"].append(line)
-            stops_data[tstop]["kierunek"].append(dest)
-            stops_data[tstop]["na_zywo"].append(live)
-            if direction == tstop:
-                print(f"{arrival_str} >> {line} >> {dest} >> {live} >> {tstop} >> {trip_id}")
-            if len(all_data["czas"]) < ilosc:
-                all_data["czas"].append(arrival_str)  # 00
+        all_data = {"czas": [], "linia": [], "kierunek": [], "na_zywo": []}
+        for _, arr, line, dst, tid, live_val, tst, _ in upcoming_trips:
+            tst_map = kml_stop_ids.get(tst, tst)[-2:]
+            if tst_map not in stops_data: stops_data[tst_map] = {"czas": [], "linia": [], "kierunek": [], "na_zywo": []}
+            if len(stops_data[tst_map]["czas"]) < ilosc:
+                stops_data[tst_map]["czas"].append(arr);
+                stops_data[tst_map]["linia"].append(line)
+                stops_data[tst_map]["kierunek"].append(dst);
+                stops_data[tst_map]["na_zywo"].append(live_val)
+            if (tst_map == direction[-2:] or direction == "00") and len(all_data["czas"]) < ilosc:
+                all_data["czas"].append(arr);
                 all_data["linia"].append(line)
-                all_data["kierunek"].append(dest)
-                all_data["na_zywo"].append(live)
-                print(f"{arrival_str} >> {line} >> {dest} >> {live} >> {tstop} >> {trip_id}")
+                all_data["kierunek"].append(dst);
+                all_data["na_zywo"].append(live_val)
 
-    print(ignore_bus)
-    try:
-        db.reference("00").set(all_data) # zapisanie 00
-        root_ref = db.reference()
-        for stop_id, data in stops_data.items(): # tworzenie folderow 00 01 itp
-            root_ref.child(stop_id).set(data) # np. w 01 daje wszystko
-    except Exception as e:
-        print("Firebase offline:", e)
-    print(f"Szerokość okna: {window.width()}, Szerokość layoutu: {layout.contentsRect().width()}")
-    print(f"Wysokość okna: {window.height()}, Wysokość layoutu: {layout.contentsRect().height()}")
-    display(all_data)
-    return True
+        def fb_update():
+            try:
+                db.reference("00").set(all_data)
+                for s_id, s_data in stops_data.items(): db.reference(s_id).set(s_data)
+            except:
+                pass
 
-header_label = QLabel("--:--")
-header_label.setFont(custom_font)
-header_label.setStyleSheet("color: white;")
-layout.addWidget(header_label, 0, 0)
+        threading.Thread(target=fb_update, daemon=True).start()
+        display(all_data)
+    finally:
+        is_updating = False
 
-for r in range(1, ilosc + 1):
-    for c in range(3):
-        pusty_label = QLabel("")
-        pusty_label.setFont(custom_font)
-        pusty_label.setStyleSheet("color: white;")
-        layout.addWidget(pusty_label, r, c)
-
-layout.setColumnStretch(0, 1)
-layout.setColumnStretch(1, 20)
-layout.setColumnStretch(2, 1)
-
+window.show()
 threading.Thread(target=timetable_update, daemon=True).start()
 main()
-timer = QTimer()
-timer.timeout.connect(main)
+timer = QTimer();
+timer.timeout.connect(main);
 timer.start(20000)
-
 sys.exit(app.exec())
