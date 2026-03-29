@@ -682,10 +682,19 @@ def main():
     finally:
         is_updating = False
 
+def key_handler(event):
+    print(f"Naciśnięto klawisz: {event.key()}") # To pokaże Ci w konsoli, czy w ogóle reaguje
+    if event.key() == Qt.Key.Key_Escape or event.key() == Qt.Key.Key_Q:
+        print("Zamykanie...")
+        app.quit()
+window.keyPressEvent = key_handler
+
 window.show()
 threading.Thread(target=timetable_update, daemon=True).start()
 main()
 timer = QTimer();
 timer.timeout.connect(main);
 timer.start(20000)
+import signal
+signal.signal(signal.SIGINT, signal.SIG_DFL)
 sys.exit(app.exec())
