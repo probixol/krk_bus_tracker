@@ -436,6 +436,16 @@ def display(data):
             kie_text = kie_text[:18] + "."
         cza_text = data['czas'][row_idx]
         status = data['na_zywo'][row_idx]
+        print(kie_text)
+        if kie_text.find("Salwator") != -1:
+            kie_text = "Salwator"
+            print(kie_text)
+        if kie_text.find("Czernichów Rynek") != -1:
+            kie_text = "Czernichów Rynek"
+            print(kie_text)
+        if kie_text.find("Jeziorany Pętla") != -1:
+            kie_text = "Jeziorany Pętla"
+            print(kie_text)
 
         row_vals = [lin_text, kie_text, cza_text]
         for col_idx in range(3):
