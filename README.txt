@@ -1,5 +1,6 @@
 UWAGA POTRZEBNY JEST KOD DO SERWERA MOGE GO DAC PRYWATNIE DC: PROBIXOL
 
+bp szef
 beta 1.1
 musisz pobrac jeszcze gtfs_krk_a, gtfs_krk_m, ald-gtfs z tych stron
 https://gtfs.ztp.krakow.pl/
