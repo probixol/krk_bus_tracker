@@ -25,6 +25,26 @@ from google.transit import gtfs_realtime_pb2
 from datetime import datetime, timedelta
 from pathlib import Path
 
+def internet_available():
+    try:
+        socket.create_connection(("8.8.8.8", 53), timeout=5)
+        return True
+    except OSError:
+        return False
+
+PROJECT_DIR = Path(__file__).resolve().parent
+config = PROJECT_DIR / "CONFIG.txt"
+with config.open(newline="", encoding="utf-8-sig") as config_file:
+    stop = config_file.readline().strip()
+    direction = config_file.readline().strip()
+    kml = config_file.readline().strip()
+    czcionka = config_file.readline().strip()
+    ilosc = int(config_file.readline().strip())
+    firebase_on = int(config_file.readline().strip())
+
+if internet_available() == False:
+    firebase_on = 0
+
 now = datetime.now()
 time = timedelta(hours=now.hour, minutes=now.minute, seconds=now.second)
 time_nosec = timedelta(hours=now.hour, minutes=now.minute)
@@ -68,7 +88,6 @@ PROJECT_DIR = Path(__file__).resolve().parent  # glowny folder
 GTFS_KRK_A = PROJECT_DIR / "GTFS_KRK_A"
 GTFS_KRK_M = PROJECT_DIR / "GTFS_KRK_M"
 GTFS_KML = PROJECT_DIR / "ald-gtfs"
-config = PROJECT_DIR / "CONFIG.txt"
 custom = PROJECT_DIR / "custom.json"
 
 print("Sync czasu...")
@@ -91,39 +110,40 @@ except subprocess.CalledProcessError:
     print("UWAGA: Brak wifi")
 except FileNotFoundError:
     print("Error: iwgetid nie jest zainstalowane")
+if firebase_on == 1:
+    # ta czesc kodu od googla
+    KEY_PATH = PROJECT_DIR / "krk-bus-tracker-firebase-adminsdk-fbsvc-0b46cc464b.json"
+    DATABASE_URL = 'https://krk-bus-tracker-default-rtdb.europe-west1.firebasedatabase.app'
+    try:
+        if not os.path.exists(KEY_PATH):  # klucz check
+            raise FileNotFoundError(f"Nie znalzeiono klucza pod adresem: {KEY_PATH}")
+        cred = credentials.Certificate(str(KEY_PATH))
+        firebase_admin.initialize_app(cred, {
+            'databaseURL': DATABASE_URL
+        })
+        print("Firebase database dziala!")
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        print("Prawdopodobnie problem z KEY_PATH")
+        exit()
+    except ValueError as e:
+        print(f"Error initializing Firebase: {e}")
+        print("Sprawdz SERVICE_ACCOUNT_KEY_PATH i DATABASE_URL.")
+        exit()
+    except Exception as e:
+        print(f"Blad typu exception: {e}")
+        exit()
 
-# ta czesc kodu od googla
-KEY_PATH = PROJECT_DIR / "krk-bus-tracker-firebase-adminsdk-fbsvc-0b46cc464b.json"
-DATABASE_URL = 'https://krk-bus-tracker-default-rtdb.europe-west1.firebasedatabase.app'
-try:
-    if not os.path.exists(KEY_PATH):  # klucz check
-        raise FileNotFoundError(f"Nie znalzeiono klucza pod adresem: {KEY_PATH}")
-    cred = credentials.Certificate(str(KEY_PATH))
-    firebase_admin.initialize_app(cred, {
-        'databaseURL': DATABASE_URL
-    })
-    print("Firebase database dziala!")
-except FileNotFoundError as e:
-    print(f"Error: {e}")
-    print("Prawdopodobnie problem z KEY_PATH")
-    exit()
-except ValueError as e:
-    print(f"Error initializing Firebase: {e}")
-    print("Sprawdz SERVICE_ACCOUNT_KEY_PATH i DATABASE_URL.")
-    exit()
-except Exception as e:
-    print(f"Blad typu exception: {e}")
-    exit()
+    database_dir = db.reference()
+    print(f"Connected to database at: {DATABASE_URL}")
 
-database_dir = db.reference()
-print(f"Connected to database at: {DATABASE_URL}")
 
-czas_dir = db.reference("00/czas")
-linia_dir = db.reference("00/linia")
-kierunek_dir = db.reference("00/kierunek")
-live_dir = db.reference("00/live")
-przystanek_dir = database_dir.child('przystanek')
-czasczas_dir = database_dir.child('czasczas')
+    czas_dir = db.reference("00/czas")
+    linia_dir = db.reference("00/linia")
+    kierunek_dir = db.reference("00/kierunek")
+    live_dir = db.reference("00/live")
+    przystanek_dir = database_dir.child('przystanek')
+    czasczas_dir = database_dir.child('czasczas')
 
 def update_db(base_dir, db_path):
     print(f"Indeksowanie bazy dla {base_dir.name}... (to chwilę potrwa)")
@@ -146,18 +166,9 @@ def update_db(base_dir, db_path):
     conn.close()
     print("Indeksowanie zakończone!")
 
-def internet_available():
-    try:
-        socket.create_connection(("8.8.8.8", 53), timeout=5)
-        return True
-    except OSError:
-        return False
-
 def trigger_force_update():
     print("Awaryjna aktualizacja GTFS! (None error)")
     try:
-        # Tu wpisz nazwę swojej funkcji, która pobiera ZIPy i robi translator()
-        # Zakładam, że nazywa się timetable_update()
         timetable_update()
         print("Baza danych została odświeżona pomyślnie.")
         return True
@@ -241,10 +252,11 @@ def refresh_time():  # poniewaz czas sie pieprzy po sleepach
     print(czasczas)
 
     def push_time():
-        try:
-            czasczas_dir.set(czasczas)
-        except:
-            pass
+        if firebase_on == 1:
+            try:
+                czasczas_dir.set(czasczas)
+            except:
+                pass
 
     threading.Thread(target=push_time, daemon=True).start()
 
@@ -459,15 +471,8 @@ def display(data):
                     lbl.setStyleSheet("color: #DB143A;")
                 else:
                     lbl.setStyleSheet("color: white;")
-
-with config.open(newline="", encoding="utf-8-sig") as config_file:
-    stop = config_file.readline().strip()
-    direction = config_file.readline().strip()
-    kml = config_file.readline().strip()
-    czcionka = config_file.readline().strip()
-    ilosc = int(config_file.readline().strip())
-
-przystanek_dir.set(str(stop + ", " + direction))
+if firebase_on == 1:
+    przystanek_dir.set(str(stop + ", " + direction))
 
 translator(GTFS_KRK_A)
 translator(GTFS_KRK_M)
